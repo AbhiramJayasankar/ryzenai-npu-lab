@@ -13,6 +13,7 @@ Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This reposi
 - AMD's bundled quicktest model ran successfully on the NPU; see [experiment 001](experiments/001_quicktest.md).
 - A [live YOLOv8 webcam experiment](experiments/002_webcam_yolov8.md) now measures NPU and CPU inference on the same frames. Power use still needs a reliable sensor.
 - [Five more AMD demo models](experiments/003_model_compatibility.md) ran on the NPU: MobileNetV2, ResNet50, nano-YOLOX, RetinaFace, and PointPainting segmentation. The NPU was faster for four in short same-input comparisons; RetinaFace was slightly slower.
+- [Experiment 004](experiments/004_why_models_run.md) is a hands-on guide to model operators, quantization, and CPU/NPU assignment. It demonstrates why listing an NPU execution provider does not prove that the NPU performed inference.
 
 Run `scripts/check_npu.ps1` in PowerShell to check the device and driver again. The script only reads system information.
 

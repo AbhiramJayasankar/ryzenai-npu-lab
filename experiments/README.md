@@ -6,4 +6,6 @@
 
 [Experiment 003](003_model_compatibility.md) tests five more quantized vision models: classification, object detection, face detection, and segmentation. It records NPU offloading, CPU/NPU output agreement, and inference timings. A separate [preview script](003_segmentation_preview.py) compares segmentation masks on one real video frame.
 
+[Experiment 004](004_why_models_run.md) explains ONNX operators, quantization, compilation, and CPU/NPU partitioning through a controlled ResNet50 test. Its [script](004_operator_assignment.py) shows how one Phoenix/Hawk Point provider setting changes the same model from CPU-only execution to 393 NPU-assigned nodes.
+
 For each experiment, record the model and source, software and driver versions, input shape, CPU/NPU settings, warm-up and measurement method, operator placement, raw results, and a short conclusion. Commit small result files and notes; keep downloaded models and datasets outside Git.
