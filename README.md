@@ -10,7 +10,7 @@ Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This reposi
 - AMD Ryzen AI Software `1.7.0` is installed at `C:\Program Files\RyzenAI\1.7.0`.
 - Miniforge Conda `26.7.2` has a dedicated `ryzen-ai-1.7.0` environment with Python `3.12.11`, Ryzen AI `1.7.0`, and ONNX Runtime `1.23.2.dev20260117`.
 - ONNX Runtime lists `VitisAIExecutionProvider`, `DmlExecutionProvider`, and `CPUExecutionProvider`.
-- No NPU performance or model compatibility results have been measured yet.
+- AMD's bundled quicktest model ran successfully on the NPU; see [experiment 001](experiments/001_quicktest.md). No performance benchmark has been measured yet.
 
 Run `scripts/check_npu.ps1` in PowerShell to check the device and driver again. The script only reads system information.
 
@@ -24,6 +24,6 @@ The laptop also has an older Conda-compatible installation, so an unqualified `c
 
 ## Next milestone
 
-Confirm that a model actually runs on this Phoenix/Hawk Point NPU using [AMD's Windows instructions](https://ryzenai.docs.amd.com/en/1.7/inst.html). AMD's guide calls for the `X1` target on this hardware. After that, measure a small model on CPU and NPU with the same inputs and record latency, throughput, and operator placement. Listing the Vitis AI provider confirms that the runtime is installed; it does not yet prove model execution on the NPU.
+Measure a small model on CPU and NPU with the same inputs and record latency, throughput, and operator placement. AMD's guide calls for the `X1` target on this hardware. The first quicktest confirmed NPU execution, but its single-run timing is not a benchmark.
 
 Experiment notes and measurements will live in [`experiments/`](experiments/README.md). Keep downloaded models, datasets, caches, and secrets out of Git.
