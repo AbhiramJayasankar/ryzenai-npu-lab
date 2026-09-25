@@ -14,6 +14,7 @@ Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This reposi
 - A [live YOLOv8 webcam experiment](experiments/002_webcam_yolov8.md) now measures NPU and CPU inference on the same frames. Power use still needs a reliable sensor.
 - [Five more AMD demo models](experiments/003_model_compatibility.md) ran on the NPU: MobileNetV2, ResNet50, nano-YOLOX, RetinaFace, and PointPainting segmentation. The NPU was faster for four in short same-input comparisons; RetinaFace was slightly slower.
 - [Experiment 004](experiments/004_why_models_run.md) is a hands-on guide to model operators, quantization, and CPU/NPU assignment. It demonstrates why listing an NPU execution provider does not prove that the NPU performed inference.
+- [Experiment 005](experiments/005_low_level_access.md) confirms that custom BF16 and INT16 programs can run directly through IRON/XRT on this Phoenix NPU. Its exploratory matrix benchmark shows the benefit of larger jobs and the overhead of tiny ones.
 
 Run `scripts/check_npu.ps1` in PowerShell to check the device and driver again. The script only reads system information.
 

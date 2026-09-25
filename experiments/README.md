@@ -8,4 +8,6 @@
 
 [Experiment 004](004_why_models_run.md) explains ONNX operators, quantization, compilation, and CPU/NPU partitioning through a controlled ResNet50 test. Its [script](004_operator_assignment.py) shows how one Phoenix/Hawk Point provider setting changes the same model from CPU-only execution to 393 NPU-assigned nodes.
 
+[Experiment 005](005_low_level_access.md) runs custom BF16 and INT16 kernels on the Phoenix NPU through the open IRON/XRT toolchain. It verifies correctness and compares warm calls for small and larger jobs with the [benchmark script](005_direct_kernel_benchmark.py).
+
 For each experiment, record the model and source, software and driver versions, input shape, CPU/NPU settings, warm-up and measurement method, operator placement, raw results, and a short conclusion. Commit small result files and notes; keep downloaded models and datasets outside Git.
