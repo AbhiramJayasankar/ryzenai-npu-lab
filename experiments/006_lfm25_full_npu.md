@@ -49,26 +49,49 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
    runs, one core took **5.31 ms**, four cores **1.77 ms**. Maximum absolute
    difference against the CPU BF16 result was **0.00390**; mean absolute
    difference was about **0.000476**. The test's stated tolerances passed.
+3. **First decoder block's recurrent convolution and gate:**
+   [`006_lfm25_npu_conv_gate.py`](006_lfm25_npu_conv_gate.py) uses the real
+   projection output, learned depthwise weights, and three-value state from a
+   previous token. The custom NPU kernel updates the state and produces the
+   gated vector. Two consecutive decode-token calls match the CPU BF16
+   reference **exactly** across both 1,024-value outputs and both 3,072-value
+   states. The second call consumes the state produced by the NPU's first
+   call, without reading it back to the CPU. Median warm second call: about
+   **1.18 ms**.
+   Phoenix allows only two input DMA channels per compute tile, so the test
+   packs projection activations and convolution weights into one input buffer.
+4. **Decode-specific matrix-vector projection:**
+   [`006_lfm25_npu_gemv.py`](006_lfm25_npu_gemv.py) runs the same 3,072-output
+   real projection without the 16-row padding. The custom BF16/FP32 GEMV
+   kernel took **3.89 ms on one core** and **1.66 ms on four cores**, with the
+   same maximum reference error `0.00390`. Compared with the padded matrix
+   kernel's latest 5.31/1.77 ms, removing arithmetic waste helps most on one
+   core; four-core latency appears substantially influenced by dispatch and
+   data movement. These are measured observations, not a separated overhead
+   breakdown.
 
-The projection currently pads one useful activation row to 16 matrix rows,
+The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
+The newer GEMV kernel removes this padding but still streams weights and is
+tested as a standalone call.
 The initial BF16-output kernel accumulated across K tiles in BF16 and had a
 much larger error (maximum `0.0391` on 64 outputs); FP32 accumulation fixed
 that. A single DMA descriptor could not encode the full 6 MB projection
 weight, so the current kernel schedules 64-output strips within one invocation.
 
-Both NPU timings include the Python/XRT call, dispatch, transfer, execution,
+The NPU timings include the Python/XRT call, dispatch, transfer, execution,
 and completion, with compiled binaries and allocated input buffers warmed.
-Neither operation is a complete block, and summing these timings is not a
+These operations do not yet form a complete block, and summing their timings is not a
 valid full-model performance estimate. The current test scripts use CPU-created
 reference fixtures as NPU inputs; no full-NPU decode runtime exists yet.
 
 ## Remaining model computations
 
-The first recurrent block still needs projection-output slicing, two gates,
-three-tap depthwise convolution with persistent state, output projection,
-residual addition, second RMSNorm, three MLP projections, SiLU and gated
-product. Six attention blocks also need Q/K/V projections, per-head norms,
+The first recurrent block still needs an NPU-only pipeline joining these
+operators, output projection, residual addition, second RMSNorm, three MLP
+projections, SiLU and gated product. The first convolution state comes from
+a CPU reference fixture; subsequent state remains on the NPU across calls.
+Six attention blocks also need Q/K/V projections, per-head norms,
 rotary position encoding, persistent KV cache, score reduction, softmax, value
 mixing, and output projection. The complete path additionally needs embedding
 lookup, final normalization, tied vocabulary projection, and NPU token
@@ -108,4 +131,6 @@ ignored environments:
 . .\cache\iron\mlir-aie\iron_env.ps1
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_projection.py --outputs 3072 --cores 4
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_conv_gate.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_gemv.py --cores 4
 ```

@@ -44,9 +44,16 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
             )
             synchronize(device)
             times.append((time.perf_counter() - start) * 1000)
-            if capture and step in (0, 1):
+            if capture and step in (0, 1, 2):
                 snapshots[f"step{step}_logits"] = (
                     output.logits[0, -1].float().cpu().numpy()
+                )
+                snapshots[f"step{step}_conv0_state"] = (
+                    output.past_key_values.layers[0].conv_states[0]
+                    .float()
+                    .cpu()
+                    .numpy()
+                    .copy()
                 )
                 for layer, hidden in enumerate(output.hidden_states):
                     snapshots[f"step{step}_hidden{layer}"] = (
@@ -115,24 +122,38 @@ def main():
     if args.reference:
         projection_inputs = []
         projection_outputs = []
+        conv_outputs_to_projection = []
 
         def capture_projection(_module, inputs, output):
             projection_inputs.append(inputs[0][0, -1].float().cpu().numpy())
             projection_outputs.append(output[0, -1].float().cpu().numpy())
 
+        def capture_conv_output(_module, inputs, _output):
+            conv_outputs_to_projection.append(inputs[0][0, -1].float().cpu().numpy())
+
         hook = model.model.layers[0].conv.in_proj.register_forward_hook(capture_projection)
+        conv_hook = model.model.layers[0].conv.out_proj.register_forward_hook(
+            capture_conv_output
+        )
         try:
-            _, reference_tokens, snapshots = generate(model, input_ids, 2, capture=True)
+            _, reference_tokens, snapshots = generate(model, input_ids, 3, capture=True)
         finally:
             hook.remove()
-        for step in range(2):
+            conv_hook.remove()
+        for step in range(3):
             snapshots[f"step{step}_first_projection_input"] = projection_inputs[step]
             snapshots[f"step{step}_first_projection_output"] = projection_outputs[step]
+            snapshots[f"step{step}_conv0_output_projection_input"] = (
+                conv_outputs_to_projection[step]
+            )
         snapshots["first_projection_weight"] = (
             model.model.layers[0].conv.in_proj.weight.detach().float().cpu().numpy()
         )
         snapshots["first_operator_norm_weight"] = (
             model.model.layers[0].operator_norm.weight.detach().float().cpu().numpy()
+        )
+        snapshots["conv0_depthwise_weight"] = (
+            model.model.layers[0].conv.conv.weight[:, 0, :].detach().float().cpu().numpy()
         )
         snapshots["prompt_ids"] = input_ids.cpu().numpy()
         snapshots["reference_token_ids"] = np.asarray(reference_tokens)
