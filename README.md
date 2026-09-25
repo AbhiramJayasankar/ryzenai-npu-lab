@@ -12,6 +12,7 @@ Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This reposi
 - ONNX Runtime lists `VitisAIExecutionProvider`, `DmlExecutionProvider`, and `CPUExecutionProvider`.
 - AMD's bundled quicktest model ran successfully on the NPU; see [experiment 001](experiments/001_quicktest.md).
 - A [live YOLOv8 webcam experiment](experiments/002_webcam_yolov8.md) now measures NPU and CPU inference on the same frames. Power use still needs a reliable sensor.
+- [Five more AMD demo models](experiments/003_model_compatibility.md) ran on the NPU: MobileNetV2, ResNet50, nano-YOLOX, RetinaFace, and PointPainting segmentation. The NPU was faster for four in short same-input comparisons; RetinaFace was slightly slower.
 
 Run `scripts/check_npu.ps1` in PowerShell to check the device and driver again. The script only reads system information.
 
@@ -25,6 +26,6 @@ The laptop also has an older Conda-compatible installation, so an unqualified `c
 
 ## Next milestone
 
-Measure power use with a reliable sensor and test more INT8 vision models. AMD's guide calls for the `X1` target on this hardware. The first quicktest confirmed NPU execution, and the YOLOv8 webcam experiment now provides a same-input CPU comparison.
+Measure power use with a reliable sensor and evaluate task accuracy on labeled data. AMD's guide calls for the `X1` target on this hardware. Quicktest, live YOLOv8, and five additional quantized vision models have now confirmed NPU execution. Inference speed varies by model.
 
 Experiment notes and measurements will live in [`experiments/`](experiments/README.md). Keep downloaded models, datasets, caches, and secrets out of Git.
