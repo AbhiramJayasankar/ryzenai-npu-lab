@@ -5,7 +5,7 @@ from pathlib import Path
 import aie.iron as iron
 import numpy as np
 from aie.helpers.taplib import TensorAccessPattern, TensorTiler2D
-from aie.iron import Buffer, In, ObjectFifo, Out, Program, Runtime, TaskGroup, Worker
+from aie.iron import Buffer, CompileTime, In, ObjectFifo, Out, Program, Runtime, TaskGroup, Worker
 from aie.iron.controlflow import range_
 from aie.iron.kernel import ExternalFunction
 from aie.utils import config
@@ -20,11 +20,14 @@ WEIGHT_LEN = 2 * WEIGHT_TILE + sum(rows * 1024 for _, rows in MATRICES)
 
 
 @iron.jit
-def attention_prefix(hidden: In, packed_weights: In, qkv_output: Out):
+def attention_prefix(
+    hidden: In, packed_weights: In, qkv_output: Out,
+    *, include_hidden: CompileTime[bool] = False,
+):
     hidden_ty = np.ndarray[(1024,), np.dtype[bfloat16]]
     weights_ty = np.ndarray[(WEIGHT_LEN,), np.dtype[bfloat16]]
     weight_tile_ty = np.ndarray[(WEIGHT_TILE,), np.dtype[bfloat16]]
-    qkv_ty = np.ndarray[(2048,), np.dtype[bfloat16]]
+    qkv_ty = np.ndarray[(3072 if include_hidden else 2048,), np.dtype[bfloat16]]
     activation_ty = np.ndarray[(2560,), np.dtype[bfloat16]]
     accum_ty = np.ndarray[(TILE,), np.dtype[np.float32]]
     bf16_tile_ty = np.ndarray[(TILE,), np.dtype[bfloat16]]
@@ -34,6 +37,7 @@ def attention_prefix(hidden: In, packed_weights: In, qkv_output: Out):
     qkv_fifo = ObjectFifo(qkv_ty, name="attention_qkv", depth=1)
     activation = Buffer(activation_ty, name="attention_activation")
     qkv = Buffer(qkv_ty, name="attention_qkv_buffer")
+    original_hidden = Buffer(hidden_ty, name="attention_original_hidden")
     accum = Buffer(accum_ty, name="attention_accum")
     tile = Buffer(bf16_tile_ty, name="attention_tile")
     include = [config.cxx_header_path()]
@@ -58,9 +62,12 @@ def attention_prefix(hidden: In, packed_weights: In, qkv_output: Out):
         arg_types=[qkv_ty, weight_tile_ty], include_dirs=include,
     )
 
-    def core_fn(hidden_in, weights_in, qkv_out, act, local_qkv, acc, part,
+    def core_fn(hidden_in, weights_in, qkv_out, act, local_qkv, saved_hidden, acc, part,
                 norm, gemv, cast, head):
         h = hidden_in.acquire(1)
+        if include_hidden:
+            for i in range_(1024):
+                saved_hidden[i] = h[i]
         gamma = weights_in.acquire(1)
         norm(h, gamma, act, 1024)
         weights_in.release(1)
@@ -81,12 +88,15 @@ def attention_prefix(hidden: In, packed_weights: In, qkv_output: Out):
         out = qkv_out.acquire(1)
         for i in range_(2048):
             out[i] = local_qkv[i]
+        if include_hidden:
+            for i in range_(1024):
+                out[2048 + i] = saved_hidden[i]
         qkv_out.release(1)
 
     worker = Worker(
         core_fn,
         [hidden_fifo.cons(), weight_fifo.cons(), qkv_fifo.prod(), activation,
-         qkv, accum, tile, norm_op, gemv_op, cast_op, head_op],
+         qkv, original_hidden, accum, tile, norm_op, gemv_op, cast_op, head_op],
     )
     offsets = {"gamma": 0, "aux": WEIGHT_LEN - WEIGHT_TILE}
     offset = WEIGHT_TILE

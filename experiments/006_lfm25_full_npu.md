@@ -233,8 +233,18 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     of isolated kernel calls. Per-stage timing showed roughly 19-35 ms for
     most calls, including NPU packing calls that take around 1 ms alone.
     This is the known Phoenix context-cache eviction cost with seven
-    distinct compiled programs. It motivates fusing Q/K/V pass-through,
-    attention context, KV append, and tail packing to reduce live contexts.
+    distinct compiled programs. A fused variant passes the original hidden
+    vector through the Q/K/V program and combines context computation,
+    KV append, and tail packing in one NPU program. It uses five distinct
+    programs. [`006_lfm25_npu_three_layers.py --fused`](006_lfm25_npu_three_layers.py)
+    preserved the same hidden and cache errors and reduced the warmed
+    three-layer median to **61.4 ms** (about **3.4 times faster** than the
+    seven-program chain). Stage medians were 18.3 ms and 18.0 ms for the two
+    recurrent blocks, 1.4 ms for recurrent packing, 4.8 ms for attention
+    Q/K/V, 5.5 ms for fused context/cache/packing, and 13.4 ms for the
+    attention tail. The near-additive total confirms the context-cache
+    eviction was the main extra cost. This remains slower than the CPU's
+    full-model decode and is not yet an end-to-end model runtime.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -262,7 +272,8 @@ state. The first convolution state still comes from a CPU reference fixture;
 prompt prefill must eventually produce it on the NPU.
 The first attention block now has a full one-token NPU correctness path. It
 still needs dynamic cache lengths across tokens, NPU-produced prompt KV
-state, and fewer compiled programs to avoid context-cache eviction.
+state, and better use of four compute cores. The three-layer path now uses
+five compiled programs and avoids the observed context-cache eviction.
 The other five attention blocks need the same path. The complete model
 additionally needs embedding
 lookup, final normalization, tied vocabulary projection, and NPU token
@@ -317,4 +328,5 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_context.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_block.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_three_layers.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_three_layers.py --fused
 ```

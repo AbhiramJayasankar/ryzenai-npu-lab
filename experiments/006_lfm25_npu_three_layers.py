@@ -1,5 +1,6 @@
 """Chain LFM2.5 layers 0, 1, and 2 entirely through Phoenix NPU math."""
 
+import argparse
 import json
 import statistics
 import time
@@ -9,6 +10,7 @@ import aie.iron as iron
 import numpy as np
 from lfm25_attention_append_cache_kernel import append_attention_cache
 from lfm25_attention_context_kernel import attention_context
+from lfm25_attention_context_cache_kernel import attention_context_cache
 from lfm25_attention_prefix_kernel import attention_prefix
 from lfm25_attention_tail_kernel import attention_tail
 from lfm25_checkpoint import (
@@ -28,6 +30,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fused", action="store_true", help="Use fused context/cache/tail packing")
+    args = parser.parse_args()
     if type(iron.get_current_device()).__name__ != "NPU1":
         raise RuntimeError("Expected Phoenix NPU1")
     checkpoint = BF16Checkpoint(ROOT / "cache" / "lfm25-230m" / "model.safetensors")
@@ -77,7 +82,7 @@ def main():
     state0_next = iron.zeros((6144,), dtype=bfloat16, device="npu")
     state1_next = iron.zeros((6144,), dtype=bfloat16, device="npu")
     input1 = iron.zeros((12288,), dtype=bfloat16, device="npu")
-    qkv = iron.zeros((2048,), dtype=bfloat16, device="npu")
+    qkv = iron.zeros((3072 if args.fused else 2048,), dtype=bfloat16, device="npu")
     context = iron.zeros((1024,), dtype=bfloat16, device="npu")
     tail_input = iron.zeros((2048,), dtype=bfloat16, device="npu")
     hidden3 = iron.zeros((1024,), dtype=bfloat16, device="npu")
@@ -95,20 +100,26 @@ def main():
         recurrent_block(input1, weights1, state1_next, hidden2)
         timings["recurrent1"] = (time.perf_counter() - start) * 1000
         start = time.perf_counter()
-        attention_prefix(hidden2, prefix_w, qkv)
+        attention_prefix(hidden2, prefix_w, qkv, include_hidden=args.fused)
         timings["attention_prefix"] = (time.perf_counter() - start) * 1000
-        start = time.perf_counter()
-        attention_context(qkv, cache, context)
-        timings["attention_context"] = (time.perf_counter() - start) * 1000
-        start = time.perf_counter()
-        pack_attention_tail(hidden2, context, tail_input)
-        timings["pack_attention"] = (time.perf_counter() - start) * 1000
+        if args.fused:
+            start = time.perf_counter()
+            attention_context_cache(qkv, cache, tail_input, next_cache)
+            timings["context_cache_pack"] = (time.perf_counter() - start) * 1000
+        else:
+            start = time.perf_counter()
+            attention_context(qkv, cache, context)
+            timings["attention_context"] = (time.perf_counter() - start) * 1000
+            start = time.perf_counter()
+            pack_attention_tail(hidden2, context, tail_input)
+            timings["pack_attention"] = (time.perf_counter() - start) * 1000
         start = time.perf_counter()
         attention_tail(tail_input, tail_w, hidden3)
         timings["attention_tail"] = (time.perf_counter() - start) * 1000
-        start = time.perf_counter()
-        append_attention_cache(qkv, cache, next_cache)
-        timings["append_cache"] = (time.perf_counter() - start) * 1000
+        if not args.fused:
+            start = time.perf_counter()
+            append_attention_cache(qkv, cache, next_cache)
+            timings["append_cache"] = (time.perf_counter() - start) * 1000
         return timings
 
     start = time.perf_counter()
@@ -127,6 +138,7 @@ def main():
     result = {
         "device": "Phoenix NPU1",
         "operation": "three consecutive LFM2.5 layers, 0/1 recurrent and 2 attention",
+        "fused_attention_io": args.fused,
         "first_call_ms_including_compilation": elapsed_ms,
         "warmed_chain_median_ms": statistics.median(times),
         "stage_median_ms": {
