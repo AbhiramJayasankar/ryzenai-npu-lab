@@ -34,7 +34,7 @@ def load_layer(checkpoint, index):
 
 def rms_norm(x, gamma):
     y = x.float()
-    y = y * torch.rsqrt(y.pow(2).mean(-1, keepdim=True) + 1e-6)
+    y = y * torch.rsqrt(y.pow(2).mean(-1, keepdim=True) + 1e-5)
     return gamma * y.to(torch.bfloat16)
 
 
@@ -103,7 +103,7 @@ def main():
         ],
     }
     print(json.dumps(result, indent=2))
-    if any(error > 0.0625 for error in errors):
+    if any(error != 0 for error in errors):
         raise RuntimeError("CPU baseline does not match the reference fixture")
 
 

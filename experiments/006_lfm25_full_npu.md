@@ -180,13 +180,12 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     [`006_lfm25_cpu_two_recurrent_layers.py`](006_lfm25_cpu_two_recurrent_layers.py)
     executes the same two decode-layer formulas with the same BF16 checkpoint
     weights and initial fixture state using PyTorch CPU. Across 200 warmed
-    calls, its median was **5.19 ms** with 4 threads, **4.21 ms** with 8,
-    and **4.71 ms** with 16. The current one-core NPU chain is therefore
-    about **8.9 times slower** than the best measured CPU setting for this
-    limited workload (37.3 / 4.21 ms). The CPU implementation is numerically
-    close to the full-model fixture but uses a different reduction path:
-    maximum hidden-output error was 0.0078125 and maximum convolution-state
-    error was 0.046875. Its timing includes the same two recurrent layers;
+    calls, its median was **9.60 ms** with 1 thread, **4.58 ms** with 4,
+    **3.65 ms** with 8, and **4.88 ms** with 16. The current one-core NPU
+    chain is therefore about **10.2 times slower** than the best measured CPU
+    setting for this limited workload (37.3 / 3.65 ms). All outputs and
+    states of the corrected CPU implementation matched the full-model BF16
+    fixture exactly. Its timing includes the same two recurrent layers;
     neither timing includes embedding, attention, logits, or tokenization.
     This comparison is latency only; no power result is implied.
 
