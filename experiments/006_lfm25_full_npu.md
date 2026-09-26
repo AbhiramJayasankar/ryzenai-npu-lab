@@ -426,24 +426,51 @@ sharding, fusion, and persistent data should reduce latency and energy.
 
 The NPU's `xrt-smi examine --report platform` reports `Power: N/A` on this
 Phoenix device. [AMD documents that Phoenix/Hawk Point lack NPU power
-reporting](https://ryzenai.docs.amd.com/en/main/xrt_smi.html). This laptop is
-currently on AC power, so Windows battery discharge is zero. No defensible
-CPU/NPU/GPU power comparison has been measured yet.
+reporting](https://ryzenai.docs.amd.com/en/main/xrt_smi.html). Windows battery
+discharge provides whole-laptop power while unplugged, not NPU-only power.
 
 [`scripts/measure_battery_run.ps1`](../scripts/measure_battery_run.ps1)
-is ready for a battery-only comparison. It refuses an AC-powered run, samples
+was used for a battery-only comparison. It refuses an AC-powered run, samples
 idle discharge before each benchmark, skips model load and warm-up time,
 then records median active and idle-adjusted **whole-laptop watts**. It saves
-each benchmark's raw output in ignored `cache/`. Its AC guard was verified;
-the battery sampling path still needs a physical unplugged run.
+each benchmark's raw output in ignored `cache/`. Its AC guard was verified.
 
-Use the same prompt, token IDs, display state, and power mode for CPU, GPU,
-and NPU. Keep each process running long enough for the discharge sensor to
-settle; the CPU/GPU scripts accept many repeats and the NPU sequence accepts
-`--repeats 6`. Whole-laptop discharge is not an isolated NPU power reading.
-NVIDIA telemetry can additionally report GPU device power but has no NPU
-equivalent on this Phoenix device. Derive joules per position from the
-idle-adjusted watts and matching benchmark time only after valid samples.
+One unplugged session on 2026-09-26 gave these exploratory results for the
+same 21 prompt and two generated positions:
+
+| Device | Idle W | Active W | Idle-adjusted W | Battery pass | Approx. J per 23-position pass |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU, 8 threads | 23.78 | 30.00 | 6.22 | 1.194 s | 7.43 J |
+| RTX 4060 GPU | 30.13 | 38.73 | 8.60 | 0.911 s | 7.83 J |
+| Phoenix NPU prototype | 24.73 | 27.59 | 2.87 | 13.212 s | 37.85 J |
+
+Joules here are idle-adjusted watts multiplied by the matching median pass
+time, or about **0.323**, **0.341**, and **1.646 J per position** for CPU,
+GPU, and NPU respectively. Runs used 65 CPU, 90 GPU, and 6 NPU measured
+repeats after each script's warm-up; the battery sampler recorded 91, 96,
+and 81 active readings. These are **whole-laptop incremental estimates**, not
+device rail measurements. The battery sensor updates in coarse steps, idle
+power drifted between devices (especially before GPU), and the pass times
+changed on battery. A first NPU trial had a higher pre-run idle than active
+reading because the previous GPU load had not settled; its negative
+idle-adjusted result was discarded. The settled NPU trial used a 30-second
+idle baseline. The NPU uses less incremental whole-laptop power in this
+sample but about **five times more energy per 23-position pass** than the
+measured CPU/GPU runs because its prototype is much slower. Repeat trials
+with randomized order or an external meter are needed for tight power
+confidence intervals.
+
+The NPU battery run's timing breakdown was **12.01 s** for prompt positions
+and **1.20 s** for two decode positions. Summed over all 23 positions,
+attention calls took **7.65 s**, recurrent calls **4.29 s**, prompt embedding
+DMA **1.01 s**, and the three output-head calls **0.19 s**. These are
+Python/XRT wall times and expose attention/context switching as the main
+optimization target.
+
+For repeats, keep the same prompt, token IDs, display state, and power mode
+and allow enough idle time between devices for temperature and power state
+to settle. NVIDIA telemetry can additionally report GPU device power but
+has no NPU equivalent on this Phoenix device.
 
 ## Reproduce the current checks
 

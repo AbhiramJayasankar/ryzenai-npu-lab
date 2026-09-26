@@ -132,13 +132,20 @@ def main():
 
     def run_sequence():
         start = time.perf_counter()
+        timing = {"embedding_ms": 0.0, "recurrent_ms": 0.0,
+                  "attention_ms": 0.0, "head_ms": 0.0,
+                  "prompt_ms": 0.0, "decode_ms": 0.0}
         for pos in range(total_positions):
+            position_start = time.perf_counter()
             if pos < args.positions:
+                operation_start = time.perf_counter()
                 embedding_dma(table, inputs[pos], token_id=int(prompt_ids[pos]))
+                timing["embedding_ms"] += (time.perf_counter() - operation_start) * 1000
                 hidden = inputs[pos]
             else:
                 hidden = head_embeddings[pos - args.positions]
             for layer in layers:
+                operation_start = time.perf_counter()
                 output = layer["hidden"][pos]
                 if layer["kind"] == "conv":
                     state_in = layer["initial_state"] if pos == 0 else layer["state"][pos - 1]
@@ -158,12 +165,19 @@ def main():
                             past_length=pos,
                         )
                     attention_tail(layer["tail_input"][pos], layer["tail_weights"], output)
+                key = "recurrent_ms" if layer["kind"] == "conv" else "attention_ms"
+                timing[key] += (time.perf_counter() - operation_start) * 1000
                 hidden = output
             if pos >= args.positions - 1:
+                operation_start = time.perf_counter()
                 head_index = pos - (args.positions - 1)
                 fused_vocab_4core(hidden, head_weights,
                                   head_embeddings[head_index], head_tokens[head_index])
-        return (time.perf_counter() - start) * 1000
+                timing["head_ms"] += (time.perf_counter() - operation_start) * 1000
+            phase = "prompt_ms" if pos < args.positions else "decode_ms"
+            timing[phase] += (time.perf_counter() - position_start) * 1000
+        timing["total_ms"] = (time.perf_counter() - start) * 1000
+        return timing
 
     run_sequence()
     elapsed = [run_sequence() for _ in range(args.repeats)]
@@ -200,7 +214,12 @@ def main():
         "operation": "teacher-forced prompt and NPU autoregressive decode from empty state",
         "prompt_positions": args.positions,
         "decode_positions": args.decode,
-        "warmed_total_median_ms": statistics.median(elapsed),
+        "warmed_total_median_ms": statistics.median(run["total_ms"] for run in elapsed),
+        "timing_median_ms": {
+            key: statistics.median(run[key] for run in elapsed)
+            for key in ("prompt_ms", "decode_ms", "embedding_ms", "recurrent_ms",
+                        "attention_ms", "head_ms")
+        },
         "head_checks": head_checks,
         "position_checks": positions,
     }

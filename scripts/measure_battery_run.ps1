@@ -78,6 +78,7 @@ $result = [ordered]@{
     idle_median_watts = $idleWatts
     active_median_watts = $activeWatts
     idle_adjusted_watts = $activeWatts - $idleWatts
+    positive_idle_adjusted_power = $activeWatts -gt $idleWatts
     idle_samples = $idle.Count
     active_samples = $active.Count
     process_wall_seconds = ($processEnd - $processStart).TotalSeconds
