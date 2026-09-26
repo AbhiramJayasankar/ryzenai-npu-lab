@@ -324,6 +324,24 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     wall time including context switching, not isolated core execution.
     Synthetic one-hot probes forced each of the four shards to win in turn;
     every NPU token ID and returned embedding row matched exactly.
+20. **First prompt token from empty state:**
+    [`006_lfm25_npu_attention_first.py`](006_lfm25_npu_attention_first.py)
+    validated a special first-position attention program against CPU BF16
+    for all six attention layers. Each initial KV cache matched exactly
+    except when upstream NPU hidden error had already accumulated; isolated
+    per-layer errors were at most **0.03125** for cache and **0.001953125**
+    for hidden output. The complete
+    [`006_lfm25_npu_prompt_first_stack.py`](006_lfm25_npu_prompt_first_stack.py)
+    starts all recurrent and attention states empty, selects prompt token
+    **1** from the tied embedding table by NPU DMA, runs all 14 blocks, and
+    applies the four-core fused output head. The embedding and returned
+    winning row matched exactly, the NPU selected the CPU's token **1**,
+    recurrent/KV state error was at most **0.0625**, and final raw hidden
+    error was **0.25** in BF16 values. The warmed wall-time median was
+    **553 ms** across three repeats, including a **42 ms** embedding call
+    and **49 ms** head call. Those calls include Python/XRT dispatch and
+    substantial NPU context switching. This covers position zero only;
+    the other 20 prompt positions are not yet chained on NPU.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -344,8 +362,10 @@ CPU-created, so this is not yet a self-contained NPU inference runtime.
 
 ## Remaining model computations
 
-The immediate correctness gate is **NPU prompt prefill and initial embedding**,
-so the runtime can start without CPU-produced model state.
+The immediate correctness gate is **the remaining prompt prefill**. Position
+zero now starts from token ID and empty state entirely on the NPU, but the
+other 20 prompt positions still use CPU-generated fixture state in the
+decode experiment.
 The current attention context program compiles separately for each prior
 cache length (currently tested at 21 and 22; the kernel's local score
 storage bounds it to 127 prior positions). Efficient variable-length
@@ -383,6 +403,7 @@ ignored environments:
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_baseline.py --device cuda --tokens 24
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_cpu_two_recurrent_layers.py --threads 8 --repeats 200
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py
+& .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_prompt_first_reference.py
 foreach ($layer in 4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py --layer $layer }
 foreach ($layer in 2,4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py --layer $layer --step 2 }
 
@@ -412,4 +433,6 @@ foreach ($layer in 2,4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experim
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_fused_vocab.py --cores 4
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_fused_vocab.py --cores 4 --probe-shards
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --fused-head --tokens 2
+foreach ($layer in 2,4,6,8,10,12) { & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_first.py --layer $layer }
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_prompt_first_stack.py
 ```
