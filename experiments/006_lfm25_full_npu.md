@@ -154,6 +154,41 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
    It is a **single-block decode check**, not a full model speed or power
    result. The first token's initial convolution state still comes from a
    reference fixture; prompt prefill is not implemented.
+10. **Two successive recurrent layers and NPU-resident state:**
+    [`006_lfm25_npu_two_recurrent_layers.py`](006_lfm25_npu_two_recurrent_layers.py)
+    loads the real BF16 checkpoint weights for layers 0 and 1 using
+    [`lfm25_checkpoint.py`](lfm25_checkpoint.py). The *same compiled* recurrent
+    program runs both layers with different weights; an NPU packing kernel
+    connects layer 0's output to layer 1's input. Both final hidden vectors
+    and both convolution states matched the CPU BF16 fixture **exactly** for
+    the first decode token. A warmed layer 1 call took a median **17.8 ms**;
+    the two-layer chain, including NPU packing, took **37.3 ms**. These are
+    invocation times, not a whole-model throughput estimate.
+
+    On the next token, each layer received its prior NPU-produced state.
+    Its initial layer-0 hidden input came from the CPU reference fixture
+    because embedding and earlier model work are not implemented yet.
+    Layer 0's output was **96.0% bit-exact**, with maximum absolute error
+    **0.000244**; layer 1's chained output was **53.9% bit-exact**, with
+    maximum absolute error **0.000610**. The chained layer-1 convolution
+    state differed by at most **0.0078125**. To separate state handling from
+    propagated rounding, feeding layer 1 the fixture's second-token hidden
+    vector plus its **NPU-produced** prior state gave an **exact state** and
+    output error at most **0.000488**. This is evidence of small BF16
+    differences accumulating across blocks, not evidence of CPU fallback.
+11. **Matched two-layer CPU latency:**
+    [`006_lfm25_cpu_two_recurrent_layers.py`](006_lfm25_cpu_two_recurrent_layers.py)
+    executes the same two decode-layer formulas with the same BF16 checkpoint
+    weights and initial fixture state using PyTorch CPU. Across 200 warmed
+    calls, its median was **5.19 ms** with 4 threads, **4.21 ms** with 8,
+    and **4.71 ms** with 16. The current one-core NPU chain is therefore
+    about **8.9 times slower** than the best measured CPU setting for this
+    limited workload (37.3 / 4.21 ms). The CPU implementation is numerically
+    close to the full-model fixture but uses a different reduction path:
+    maximum hidden-output error was 0.0078125 and maximum convolution-state
+    error was 0.046875. Its timing includes the same two recurrent layers;
+    neither timing includes embedding, attention, logits, or tokenization.
+    This comparison is latency only; no power result is implied.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -166,14 +201,15 @@ weight, so the current kernel schedules 64-output strips within one invocation.
 
 The NPU timings include the Python/XRT call, dispatch, transfer, execution,
 and completion, with compiled binaries and allocated input buffers warmed.
-These operations do not yet form a complete block, and summing their standalone
-timings is not a valid full-model performance estimate. The current test scripts
-use CPU-created reference fixtures as NPU inputs; no full-NPU decode runtime
-exists yet.
+The two-layer chain is still a partial model, and summing standalone timings
+is not a valid full-model performance estimate. Current tests use CPU-created
+reference fixtures for the initial hidden vector and convolution state; no
+full-NPU decode runtime exists yet.
 
 ## Remaining model computations
 
-The first recurrent block now has a one-program correctness implementation.
+The first two recurrent blocks now have a reusable one-program correctness
+implementation, connected by NPU-side packing.
 The next efficiency step is to distribute its projections across the four
 Phoenix compute cores while keeping one hardware context and NPU-resident
 state. The first convolution state still comes from a CPU reference fixture;
@@ -212,6 +248,7 @@ ignored environments:
 ```powershell
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_baseline.py --device cpu --tokens 24 --reference cache\lfm25-reference-cpu.npz
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_baseline.py --device cuda --tokens 24
+& .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_cpu_two_recurrent_layers.py --threads 8 --repeats 200
 
 & 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1' -Arch amd64
 . .\cache\iron\mlir-aie\iron_env.ps1
@@ -226,4 +263,5 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_gemv.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_proj_conv.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_single_program_block.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_two_recurrent_layers.py
 ```

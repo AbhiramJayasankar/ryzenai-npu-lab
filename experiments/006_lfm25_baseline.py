@@ -55,6 +55,13 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
                     .numpy()
                     .copy()
                 )
+                snapshots[f"step{step}_conv1_state"] = (
+                    output.past_key_values.layers[1].conv_states[0]
+                    .float()
+                    .cpu()
+                    .numpy()
+                    .copy()
+                )
                 for layer, hidden in enumerate(output.hidden_states):
                     snapshots[f"step{step}_hidden{layer}"] = (
                         hidden[0, -1].float().cpu().numpy()
