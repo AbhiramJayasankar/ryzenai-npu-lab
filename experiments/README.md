@@ -15,4 +15,6 @@ For the present state and a self-contained continuation guide, start with the [e
 
 [Experiment 007](007_lfm25_chat.md) packages the model into a short-context interactive NPU chat runner and tests new prompts against sequential CPU BF16 token selections.
 
+[Experiment 008](008_long_context_limits.md) tests NPU-only chunked attention beyond the old 64/96-position limit and explains why a 4K-token chat remains too slow in the current implementation.
+
 For each experiment, record the model and source, software and driver versions, input shape, CPU/NPU settings, warm-up and measurement method, operator placement, raw results, and a short conclusion. Commit small result files and notes; keep downloaded models and datasets outside Git.

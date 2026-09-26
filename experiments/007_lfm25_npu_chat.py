@@ -1,8 +1,9 @@
 """Small interactive LFM2.5-230M chat runner with all model math on Phoenix NPU.
 
-The current attention kernel supports 96 total positions. In one process,
-chat turns reuse NPU state when the next transcript retains the same token
-prefix; otherwise the runner rebuilds it from token IDs.
+The default attention kernel supports 64 total positions. An experimental
+chunked mode accepts up to 4096 positions, with sharply increasing latency.
+In one process, chat turns reuse NPU state when the next transcript retains
+the same token prefix; otherwise the runner rebuilds it from token IDs.
 """
 
 import argparse
@@ -16,6 +17,9 @@ from ml_dtypes import bfloat16
 from tokenizers import Tokenizer
 
 from lfm25_attention_context_cache_kernel import attention_context_cache
+from lfm25_attention_chunked_cache_kernel import (
+    BLOCK_ELEMENTS as CHUNK_BLOCK_ELEMENTS, attention_context_chunked,
+)
 from lfm25_attention_first_context_kernel import attention_first_context
 from lfm25_attention_fixed64_cache_kernel import (
     CACHE_ELEMENTS as FIXED64_CACHE_ELEMENTS,
@@ -41,6 +45,7 @@ KINDS = ("conv", "conv", "attention", "conv", "attention", "conv",
 VOCAB = 65536
 EOS_ID = 7
 MAX_POSITIONS = 96
+CHUNKED_CONTEXT_POSITIONS = 4096
 _FREQUENCIES = np.float32(1) / np.power(
     np.float32(1_000_000), np.arange(0, 64, 2, dtype=np.float32) / np.float32(64)
 )
@@ -84,7 +89,11 @@ class NPUChat:
         if not (MODEL / "model.safetensors").is_file():
             raise FileNotFoundError(f"Model checkpoint missing under {MODEL}")
         self.cache_mode = cache_mode
-        self.max_positions = 64 if cache_mode == "fixed64" else MAX_POSITIONS
+        self.max_positions = {
+            "fixed64": 64,
+            "variable": MAX_POSITIONS,
+            "chunked": CHUNKED_CONTEXT_POSITIONS,
+        }[cache_mode]
         self.tokenizer = Tokenizer.from_file(str(MODEL / "tokenizer.json"))
         checkpoint = BF16Checkpoint(MODEL / "model.safetensors")
         embeddings = checkpoint.load("model.embed_tokens.weight")
@@ -154,18 +163,30 @@ class NPUChat:
                 prefix_weights = iron.tensor(weights, dtype=bfloat16)
                 qkv = iron.zeros((3072,), dtype=bfloat16, device="npu")
                 packed_tail = iron.zeros((2048,), dtype=bfloat16, device="npu")
-                cache_size = (FIXED64_CACHE_ELEMENTS if self.cache_mode == "fixed64"
-                              else 8 * 2 * (position + 1) * 64)
+                if self.cache_mode == "chunked":
+                    block_count = position // 64 + 1
+                    cache_size = block_count * CHUNK_BLOCK_ELEMENTS
+                    if position and position % 64 == 0:
+                        old = layer["cache"].numpy().reshape(-1)
+                        layer["cache"] = iron.tensor(np.concatenate((
+                            old, np.zeros((CHUNK_BLOCK_ELEMENTS,), dtype=bfloat16),
+                        )), dtype=bfloat16)
+                else:
+                    cache_size = (FIXED64_CACHE_ELEMENTS if self.cache_mode == "fixed64"
+                                  else 8 * 2 * (position + 1) * 64)
                 next_cache = iron.zeros((cache_size,), dtype=bfloat16, device="npu")
                 attention_prefix(hidden, prefix_weights, qkv, include_hidden=True)
                 if position == 0:
-                    first_op = (attention_first_fixed64 if self.cache_mode == "fixed64"
+                    first_op = (attention_first_fixed64 if self.cache_mode != "variable"
                                 else attention_first_context)
                     first_op(qkv, packed_tail, next_cache)
                 else:
                     if self.cache_mode == "fixed64":
                         attention_context_fixed64(qkv, layer["cache"], packed_tail,
                                                   next_cache)
+                    elif self.cache_mode == "chunked":
+                        attention_context_chunked(qkv, layer["cache"], packed_tail,
+                                                  next_cache, block_count=block_count)
                     else:
                         attention_context_cache(qkv, layer["cache"], packed_tail,
                                                 next_cache, past_length=position)
@@ -230,12 +251,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prompt", help="Run one prompt; omit for interactive chat")
     parser.add_argument("--max-new-tokens", type=int, default=16)
-    parser.add_argument("--cache-mode", choices=("variable", "fixed64"),
+    parser.add_argument("--cache-mode", choices=("variable", "fixed64", "chunked"),
                         default="fixed64")
     parser.add_argument("--json", action="store_true", help="Print one JSON result")
     args = parser.parse_args()
-    if not 1 <= args.max_new_tokens <= MAX_POSITIONS:
-        parser.error("--max-new-tokens must be between 1 and 96")
+    max_positions = {"fixed64": 64, "variable": MAX_POSITIONS,
+                     "chunked": CHUNKED_CONTEXT_POSITIONS}[args.cache_mode]
+    if not 1 <= args.max_new_tokens <= max_positions:
+        parser.error(f"--max-new-tokens must be between 1 and {max_positions}")
     if args.json and args.prompt is None:
         parser.error("--json requires --prompt")
     chat = NPUChat(args.cache_mode)

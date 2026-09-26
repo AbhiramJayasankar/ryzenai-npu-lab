@@ -7,6 +7,9 @@ NPU state across turns when the token prefix is unchanged. On the configured
 laptop, launch it with `& .\scripts\chat_lfm25_npu.ps1` from this repository's
 root. The [experiment 006 handoff](experiments/006_handoff.md) records the
 earlier fixed-sequence proof, setup, speed, and power comparison.
+An [experimental chunked context path](experiments/008_long_context_limits.md)
+crosses the earlier 64/96-token ceiling, but measured latency makes long
+NPU-only chats impractical for now.
 
 Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This repository will contain our own scripts, measurements, and conclusions. AMD's [RyzenAI-SW examples](https://github.com/amd/RyzenAI-SW) are a reference, not part of this repository.
 

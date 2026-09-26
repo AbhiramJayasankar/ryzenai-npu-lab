@@ -1,7 +1,7 @@
 param(
     [Alias('Prompt')][string]$Message,
     [int]$MaxNewTokens = 16,
-    [ValidateSet('fixed64', 'variable')][string]$CacheMode = 'fixed64',
+    [ValidateSet('fixed64', 'variable', 'chunked')][string]$CacheMode = 'fixed64',
     [switch]$Json
 )
 

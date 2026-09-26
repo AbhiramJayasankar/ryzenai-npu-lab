@@ -39,6 +39,11 @@ several minutes and writes only to IRON's ignored disk cache. The fixed
 cache is the practical default because previously unseen variable lengths
 otherwise compile during a chat turn.
 
+An experimental `-CacheMode chunked` path accepts longer transcripts by
+streaming 64-token KV blocks through the NPU. Its measured latency grows
+sharply with context, so it is not the default. See
+[experiment 008](008_long_context_limits.md) for correctness and speed data.
+
 This runner does **not** require CPU model reference files at inference time.
 The CPU handles tokenizer work, rotary constant preparation, and NPU program
 submission. A runtime token-ID tensor enters a custom NPU embedding program,
