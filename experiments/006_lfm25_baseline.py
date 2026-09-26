@@ -125,6 +125,9 @@ def main():
         conv_outputs_to_projection = []
         conv_projected_outputs = []
         ffn_norm_inputs = []
+        ffn_norm_outputs = []
+        ffn_projection_outputs = {name: [] for name in ("w1", "w2", "w3")}
+        ffn_w2_inputs = []
 
         def capture_projection(_module, inputs, output):
             projection_inputs.append(inputs[0][0, -1].float().cpu().numpy())
@@ -134,8 +137,16 @@ def main():
             conv_outputs_to_projection.append(inputs[0][0, -1].float().cpu().numpy())
             conv_projected_outputs.append(output[0, -1].float().cpu().numpy())
 
-        def capture_ffn_norm(_module, inputs, _output):
+        def capture_ffn_norm(_module, inputs, output):
             ffn_norm_inputs.append(inputs[0][0, -1].float().cpu().numpy())
+            ffn_norm_outputs.append(output[0, -1].float().cpu().numpy())
+
+        def capture_ffn_projection(name):
+            def capture(_module, inputs, output):
+                ffn_projection_outputs[name].append(output[0, -1].float().cpu().numpy())
+                if name == "w2":
+                    ffn_w2_inputs.append(inputs[0][0, -1].float().cpu().numpy())
+            return capture
 
         hook = model.model.layers[0].conv.in_proj.register_forward_hook(capture_projection)
         conv_hook = model.model.layers[0].conv.out_proj.register_forward_hook(
@@ -144,12 +155,20 @@ def main():
         ffn_hook = model.model.layers[0].ffn_norm.register_forward_hook(
             capture_ffn_norm
         )
+        ffn_projection_hooks = [
+            getattr(model.model.layers[0].feed_forward, name).register_forward_hook(
+                capture_ffn_projection(name)
+            )
+            for name in ("w1", "w2", "w3")
+        ]
         try:
             _, reference_tokens, snapshots = generate(model, input_ids, 3, capture=True)
         finally:
             hook.remove()
             conv_hook.remove()
             ffn_hook.remove()
+            for projection_hook in ffn_projection_hooks:
+                projection_hook.remove()
         for step in range(3):
             snapshots[f"step{step}_first_projection_input"] = projection_inputs[step]
             snapshots[f"step{step}_first_projection_output"] = projection_outputs[step]
@@ -160,6 +179,12 @@ def main():
                 conv_projected_outputs[step]
             )
             snapshots[f"step{step}_conv0_residual"] = ffn_norm_inputs[step]
+            snapshots[f"step{step}_ffn0_norm_output"] = ffn_norm_outputs[step]
+            snapshots[f"step{step}_ffn0_w2_input"] = ffn_w2_inputs[step]
+            for name in ("w1", "w2", "w3"):
+                snapshots[f"step{step}_ffn0_{name}_output"] = (
+                    ffn_projection_outputs[name][step]
+                )
         snapshots["first_projection_weight"] = (
             model.model.layers[0].conv.in_proj.weight.detach().float().cpu().numpy()
         )

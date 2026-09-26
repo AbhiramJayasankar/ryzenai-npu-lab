@@ -69,27 +69,32 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
    core; four-core latency appears substantially influenced by dispatch and
    data movement. These are measured observations, not a separated overhead
    breakdown.
-5. **NPU-resident first convolution path through its residual:**
-   [`006_lfm25_npu_projection_chain.py`](006_lfm25_npu_projection_chain.py)
-   connects seven real NPU operations: `1024 -> 3072` GEMV, FP32-to-BF16
-   cast, convolution input packing, recurrent convolution/gate, `1024 ->
-   1024` GEMV, cast, and BF16 residual addition. The intermediate buffers
-   remain on the NPU; only the input activation, learned weights, and initial
-   convolution state come from the CPU reference fixture. On a decode token,
-   **all 3,072 input-projection values, 1,024 gated values, 3,072 next-state
-   values, 1,024 output-projection values, and 1,024 residual values matched
-   the PyTorch BF16 reference exactly**. The CPU reference fixture now also
-   records the output projection and feed-forward weights for the next stage.
+5. **Complete first recurrent block over two decode tokens:**
+   [`006_lfm25_npu_recurrent_block.py`](006_lfm25_npu_recurrent_block.py)
+   chains 17 NPU calls: input RMSNorm, two convolution projections, recurrent
+   gate/state update, first residual, second RMSNorm, three feed-forward
+   projections, SiLU gate, and final residual. New BF16 cast, convolution
+   packing, BF16 addition, and SiLU kernels keep all intermediate arithmetic
+   on the NPU. The CPU reference fixture supplies the block input, learned
+   weights, and state before the first token. The second token consumes the
+   first token's NPU-produced state. On the first token, **every recorded
+   intermediate and all 1,024 final outputs matched BF16 PyTorch exactly**.
+   On the second token, the state was exact and 96.0% of block outputs were
+   bit-exact; maximum absolute output difference was **0.000244**. The first
+   difference was one value after the convolution output GEMV; subsequent
+   BF16 rounding propagated it through the feed-forward layers. The
+   [`006_lfm25_npu_mlp.py`](006_lfm25_npu_mlp.py) standalone FFN check was
+   also bit-exact for all four outputs on the first token.
 
-   This sequence is a correctness proof, not an efficient fused implementation.
-   Median for the seven-call chain was **164-175 ms**. Each stage took about
-   **20-21 ms** when measured in that sequence, whereas repeating only its
-   first four stages took **5.5 ms total**, and the first five took **7.2 ms**.
-   Repeating six or seven stages took **147 or 171 ms**, respectively. The
-   sudden rise is consistent with costly switching among several NPU program
-   images, but the specific runtime cause has not yet been established. It
-   makes a single composed NPU program, or fewer fused stages, essential for
-   a useful latency result.
+   This chain proves one block's numerical path, **not** useful performance:
+   17 separately submitted programs took about **250-357 ms per token**.
+   Repeating five stages took about **6-7 ms total**; adding one more stage
+   raised the repeated prefix to **96-153 ms**. The jump suggests costly
+   switching among several NPU program images, but its exact runtime cause
+   remains unverified. A composed NPU program or fused stages are necessary.
+   The current SiLU kernel's polynomial was verified for the first block's
+   measured input range of roughly `[-0.75, 0.75]`; it needs a wider-range
+   implementation before reuse across all model layers.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -109,22 +114,19 @@ exists yet.
 
 ## Remaining model computations
 
-The first recurrent block still needs the second RMSNorm, three MLP
-projections, SiLU, gated product, and final residual addition, then a composed
-NPU program that avoids expensive switches among the current kernels. The
-first convolution state comes from
-a CPU reference fixture; subsequent state remains on the NPU across calls.
+The first recurrent block needs a composed NPU program that avoids expensive
+switches among the current kernels. Its first convolution state comes from a
+CPU reference fixture; subsequent state remains on the NPU across calls.
 Six attention blocks also need Q/K/V projections, per-head norms,
 rotary position encoding, persistent KV cache, score reduction, softmax, value
 mixing, and output projection. The complete path additionally needs embedding
 lookup, final normalization, tied vocabulary projection, and NPU token
 selection. Prompt prefill must initialize convolution and KV state correctly.
 
-The next meaningful correctness gate is **one complete recurrent block for
-multiple consecutive decode tokens**, compared with the model's reference
-state and output. After that, tackle one attention block and whole-model
-logits before optimizing free-running generation. Custom output-channel
-sharding and fusion should reduce padding, weight transfer, and launch cost.
+The next correctness gate is one attention block, followed by whole-model
+logits under a fixed token sequence. A full decode loop also needs state
+initialization from prompt prefill. Output-channel sharding, kernel fusion,
+and persistent weights should reduce dispatch and transfer cost.
 
 ## Power measurement
 
@@ -156,5 +158,6 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_projection.py --outputs 3072 --cores 4
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_conv_gate.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_gemv.py --cores 4
-& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_projection_chain.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_mlp.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_recurrent_block.py
 ```
