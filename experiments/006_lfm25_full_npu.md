@@ -1,5 +1,10 @@
 # Experiment 006: LFM2.5-230M on the Phoenix NPU
 
+For the tested final path, current setup, component suitability, power
+interpretation, and future work, read the [current-state handoff](006_handoff.md).
+This file preserves the chronological experiment record; intermediate sections
+describe what was known at that stage.
+
 ## Objective
 
 Run **all LFM2.5-230M model calculations** on the Ryzen 9 8945HS NPU, optimize
@@ -407,6 +412,30 @@ new 23-position sequence instead builds prompt state and all model
 activations on NPU; the CPU reference is used only for validation. Host-side
 tokenization, weight loading, positional-constant preparation, and XRT
 dispatch remain.
+
+### Follow-up transfer and cache checks
+
+The full sequence now reports recurrent packing/compute and attention
+prefix/context/tail separately. In a two-run AC baseline, recurrent compute
+took **3.590 s** and attention tail **3.155 s** of an **11.078 s** total.
+Grouping each pair of 8 KB weight tiles behind one DMA wait, with a
+two-element weight FIFO in the recurrent and attention-tail programs,
+reduced those directly changed components to **2.851 s** and **2.666 s**
+in a later four-run AC median. Complete wall time was **10.866 s** in that
+run, with separate same-code runs between **10.077 and 10.866 s** as system
+timing varied. Tokens, embeddings, and per-position error limits remained
+correct. Four-element recurrent batches brought only a small additional
+change; preloading activation vectors and pairing the attention-prefix
+weights showed no useful speed improvement, so those changes were reverted.
+
+An optional fixed-capacity 32-position KV cache uses one attention context
+program regardless of prior length. It passed all 23 positions with the
+same tokens and errors, but a matched pre-batching AC test was **11.419 s**
+versus **11.206 s** for the variable-length default. It is retained as
+`--fixed-cache` for research, not selected as the faster path. The fixed
+layout adds padded KV traffic. The earlier battery measurements below
+predate the weight-transfer change and must not be combined with its newer
+AC time to claim an updated energy result.
 
 ## Remaining runtime and efficiency work
 

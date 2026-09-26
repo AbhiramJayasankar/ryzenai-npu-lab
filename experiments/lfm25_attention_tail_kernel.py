@@ -38,7 +38,7 @@ def attention_tail(packed_hidden_and_context: In, packed_weights: In, block_outp
     bf16_tile_ty = np.ndarray[(TILE,), np.dtype[bfloat16]]
 
     data_fifo = ObjectFifo(packed_ty, name="tail_data", depth=1)
-    weight_fifo = ObjectFifo(weight_tile_ty, name="tail_weight", depth=1)
+    weight_fifo = ObjectFifo(weight_tile_ty, name="tail_weight", depth=2)
     output_fifo = ObjectFifo(hidden_ty, name="tail_output", depth=1)
     activation = Buffer(activation_ty, name="tail_activation")
     projection = Buffer(projection_ty, name="tail_projection")
@@ -178,25 +178,26 @@ def attention_tail(packed_hidden_and_context: In, packed_weights: In, block_outp
             for tap in source
         ]
 
-    def fill_weight(weight, producer, tap):
-        group = TaskGroup()
-        producer.fill(weight, tap=tap, group=group, wait=True)
-        group.finish()
-
     def sequence(data, weight, final, data_prod, weight_prod, final_cons):
         initial = TaskGroup()
         data_prod.fill(data, group=initial, wait=True)
         initial.finish()
         output_group = TaskGroup()
         final_cons.drain(final, group=output_group, wait=True)
-        for tap in matrix_taps["output"]:
-            fill_weight(weight, weight_prod, tap)
-        fill_weight(weight, weight_prod, gamma_tap)
+        taps = list(matrix_taps["output"])
+        taps.append(gamma_tap)
         for w1_tap, w3_tap in zip(matrix_taps["w1"], matrix_taps["w3"]):
-            fill_weight(weight, weight_prod, w1_tap)
-            fill_weight(weight, weight_prod, w3_tap)
-        for tap in matrix_taps["w2"]:
-            fill_weight(weight, weight_prod, tap)
+            taps.extend((w1_tap, w3_tap))
+        taps.extend(matrix_taps["w2"])
+        # The FIFO preserves tile order; completing the second transfer also
+        # means the first tile has been consumed before both tasks are freed.
+        for index in range(0, len(taps), 2):
+            group = TaskGroup()
+            pair = taps[index:index + 2]
+            for pair_index, tap in enumerate(pair):
+                weight_prod.fill(weight, tap=tap, group=group,
+                                 wait=pair_index == len(pair) - 1)
+            group.finish()
         output_group.finish()
 
     runtime = Runtime(

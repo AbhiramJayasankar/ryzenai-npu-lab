@@ -1,5 +1,11 @@
 # Ryzen AI NPU Lab
 
+**Current result:** A fixed 21-token LFM2.5-230M prompt and two generated
+positions run with all model arithmetic on the Phoenix NPU. The NPU selects
+the same three tokens as the CPU BF16 reference. See the
+[current-state handoff](experiments/006_handoff.md) for setup, exact scope,
+performance, power comparison, limitations, and future experiment ideas.
+
 Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This repository will contain our own scripts, measurements, and conclusions. AMD's [RyzenAI-SW examples](https://github.com/amd/RyzenAI-SW) are a reference, not part of this repository.
 
 ## Starting point
@@ -27,8 +33,12 @@ On the setup laptop, use Miniforge's environment Python directly from PowerShell
 
 The laptop also has an older Conda-compatible installation, so an unqualified `conda` command may select that installation instead of Miniforge.
 
-## Next milestone
+## Where to continue
 
-Improve the LFM2.5 NPU runtime's latency and repeat whole-laptop power measurements with better idle control. AMD's guide calls for the `X1` target on this hardware. The earlier vision experiments remain available for model-compatibility and operator-placement study.
+The current LFM2.5 proof and battery comparison are recorded. Further speed
+and power work is listed in the [handoff](experiments/006_handoff.md) for a
+future session. AMD's guide calls for the `X1` target on this hardware. The
+earlier vision experiments remain available for model compatibility and
+operator placement study.
 
 Experiment notes and measurements will live in [`experiments/`](experiments/README.md). Keep downloaded models, datasets, caches, and secrets out of Git.

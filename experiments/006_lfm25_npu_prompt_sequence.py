@@ -10,6 +10,10 @@ import aie.iron as iron
 import numpy as np
 from lfm25_attention_context_cache_kernel import attention_context_cache
 from lfm25_attention_first_context_kernel import attention_first_context
+from lfm25_attention_fixed_cache_kernel import (
+    CACHE_ELEMENTS, CAPACITY, HEAD_ELEMENTS,
+    attention_context_fixed, attention_first_fixed,
+)
 from lfm25_attention_prefix_kernel import attention_prefix
 from lfm25_attention_tail_kernel import attention_tail
 from lfm25_checkpoint import (
@@ -48,6 +52,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--positions", type=int, choices=range(1, 22), default=2)
     parser.add_argument("--decode", type=int, choices=(0, 1, 2), default=0)
+    parser.add_argument("--fixed-cache", action="store_true",
+                        help="Reuse one attention context program for all cache lengths")
     parser.add_argument("--repeats", type=int, default=2)
     args = parser.parse_args()
     if args.decode and args.positions != 21:
@@ -126,14 +132,18 @@ def main():
                            for _ in range(total_positions)]
             info["tail_input"] = [iron.zeros((2048,), dtype=bfloat16, device="npu")
                                   for _ in range(total_positions)]
-            info["cache"] = [iron.zeros((8 * 2 * (pos + 1) * 64,), dtype=bfloat16, device="npu")
+            info["cache"] = [iron.zeros((CACHE_ELEMENTS if args.fixed_cache else
+                                          8 * 2 * (pos + 1) * 64,), dtype=bfloat16, device="npu")
                              for pos in range(total_positions)]
         layers.append(info)
 
     def run_sequence():
         start = time.perf_counter()
         timing = {"embedding_ms": 0.0, "recurrent_ms": 0.0,
-                  "attention_ms": 0.0, "head_ms": 0.0,
+                  "pack_ms": 0.0, "recurrent_compute_ms": 0.0,
+                  "attention_ms": 0.0, "attention_prefix_ms": 0.0,
+                  "attention_context_ms": 0.0, "attention_tail_ms": 0.0,
+                  "head_ms": 0.0,
                   "prompt_ms": 0.0, "decode_ms": 0.0}
         for pos in range(total_positions):
             position_start = time.perf_counter()
@@ -150,21 +160,38 @@ def main():
                 if layer["kind"] == "conv":
                     state_in = layer["initial_state"] if pos == 0 else layer["state"][pos - 1]
                     pack_block_input(hidden, state_in, layer["packed"][pos])
+                    packed_at = time.perf_counter()
                     recurrent_block(layer["packed"][pos], layer["weights"],
                                     layer["state"][pos], output)
+                    computed_at = time.perf_counter()
+                    timing["pack_ms"] += (packed_at - operation_start) * 1000
+                    timing["recurrent_compute_ms"] += (computed_at - packed_at) * 1000
                 else:
                     attention_prefix(hidden, layer["prefix_weights"][pos],
                                      layer["qkv"][pos], include_hidden=True)
+                    prefixed_at = time.perf_counter()
                     if pos == 0:
-                        attention_first_context(layer["qkv"][pos], layer["tail_input"][pos],
-                                                layer["cache"][pos])
+                        first_op = attention_first_fixed if args.fixed_cache else attention_first_context
+                        first_op(layer["qkv"][pos], layer["tail_input"][pos],
+                                 layer["cache"][pos])
                     else:
-                        attention_context_cache(
-                            layer["qkv"][pos], layer["cache"][pos - 1],
-                            layer["tail_input"][pos], layer["cache"][pos],
-                            past_length=pos,
-                        )
+                        if args.fixed_cache:
+                            attention_context_fixed(
+                                layer["qkv"][pos], layer["cache"][pos - 1],
+                                layer["tail_input"][pos], layer["cache"][pos],
+                            )
+                        else:
+                            attention_context_cache(
+                                layer["qkv"][pos], layer["cache"][pos - 1],
+                                layer["tail_input"][pos], layer["cache"][pos],
+                                past_length=pos,
+                            )
+                    context_at = time.perf_counter()
                     attention_tail(layer["tail_input"][pos], layer["tail_weights"], output)
+                    tailed_at = time.perf_counter()
+                    timing["attention_prefix_ms"] += (prefixed_at - operation_start) * 1000
+                    timing["attention_context_ms"] += (context_at - prefixed_at) * 1000
+                    timing["attention_tail_ms"] += (tailed_at - context_at) * 1000
                 key = "recurrent_ms" if layer["kind"] == "conv" else "attention_ms"
                 timing[key] += (time.perf_counter() - operation_start) * 1000
                 hidden = output
@@ -193,6 +220,14 @@ def main():
                 expected_state = expected[pos][index]["state"]
             else:
                 actual_state = layer["cache"][pos].numpy().astype(np.float32)
+                if args.fixed_cache:
+                    heads = actual_state.reshape(8, HEAD_ELEMENTS)
+                    if not np.all(heads[:, 0] == pos + 1):
+                        raise RuntimeError(f"NPU cache lengths diverged at position {pos}")
+                    keys = heads[:, 2:2 + CAPACITY * 64].reshape(8, CAPACITY, 64)[:, :pos + 1]
+                    values = heads[:, 2 + CAPACITY * 64:].reshape(8, CAPACITY, 64)[:, :pos + 1]
+                    actual_state = np.stack([keys.reshape(8, -1),
+                                             values.reshape(8, -1)], axis=1).reshape(-1)
                 expected_state = expected[pos][index]["cache"]
             max_state = max(max_state, float(np.max(np.abs(actual_state - expected_state))))
         token_id = (int(prompt_ids[pos]) if pos < args.positions else
@@ -214,11 +249,14 @@ def main():
         "operation": "teacher-forced prompt and NPU autoregressive decode from empty state",
         "prompt_positions": args.positions,
         "decode_positions": args.decode,
+        "fixed_cache": args.fixed_cache,
         "warmed_total_median_ms": statistics.median(run["total_ms"] for run in elapsed),
         "timing_median_ms": {
             key: statistics.median(run[key] for run in elapsed)
-            for key in ("prompt_ms", "decode_ms", "embedding_ms", "recurrent_ms",
-                        "attention_ms", "head_ms")
+            for key in ("prompt_ms", "decode_ms", "embedding_ms", "pack_ms",
+                        "recurrent_compute_ms", "recurrent_ms", "attention_prefix_ms",
+                        "attention_context_ms", "attention_tail_ms", "attention_ms",
+                        "head_ms")
         },
         "head_checks": head_checks,
         "position_checks": positions,

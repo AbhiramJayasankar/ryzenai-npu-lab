@@ -11,5 +11,6 @@
 [Experiment 005](005_low_level_access.md) runs custom BF16 and INT16 kernels on the Phoenix NPU through the open IRON/XRT toolchain. It verifies correctness and compares warm calls for small and larger jobs with the [benchmark script](005_direct_kernel_benchmark.py).
 
 [Experiment 006](006_lfm25_full_npu.md) tracks the all-NPU LFM2.5-230M implementation, CPU/GPU baselines, and verified custom model operations on the Phoenix NPU.
+For the present state and a self-contained continuation guide, start with the [experiment 006 handoff](006_handoff.md).
 
 For each experiment, record the model and source, software and driver versions, input shape, CPU/NPU settings, warm-up and measurement method, operator placement, raw results, and a short conclusion. Commit small result files and notes; keep downloaded models and datasets outside Git.

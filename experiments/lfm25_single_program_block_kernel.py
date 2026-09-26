@@ -48,7 +48,7 @@ def recurrent_block(
     bf16_tile_ty = np.ndarray[(TILE,), np.dtype[bfloat16]]
 
     data_fifo = ObjectFifo(data_chunk_ty, name="block_data", depth=1)
-    weight_fifo = ObjectFifo(weight_tile_ty, name="block_weight", depth=1)
+    weight_fifo = ObjectFifo(weight_tile_ty, name="block_weight", depth=2)
     state_fifo = ObjectFifo(state_ty, name="block_next_state", depth=1)
     output_fifo = ObjectFifo(hidden_ty, name="block_final", depth=1)
 
@@ -247,11 +247,6 @@ def recurrent_block(
             for tap in original
         ]
 
-    def fill_weight_group(weight, weight_prod, tap):
-        group = TaskGroup()
-        weight_prod.fill(weight, tap=tap, group=group, wait=True)
-        group.finish()
-
     def sequence(data, weight, next_state, final, data_prod, weight_prod,
                  state_cons, final_cons):
         initial = TaskGroup()
@@ -262,16 +257,21 @@ def recurrent_block(
         data_prod.fill(data, tap=state_tap, group=outputs, wait=True)
         state_cons.drain(next_state, group=outputs, wait=True)
         final_cons.drain(final, group=outputs, wait=True)
-        for tap in matrix_taps["input"]:
-            fill_weight_group(weight, weight_prod, tap)
-        for tap in matrix_taps["output"]:
-            fill_weight_group(weight, weight_prod, tap)
-        fill_weight_group(weight, weight_prod, gamma_taps["ffn_gamma"])
+        taps = list(matrix_taps["input"])
+        taps.extend(matrix_taps["output"])
+        taps.append(gamma_taps["ffn_gamma"])
         for w1_tap, w3_tap in zip(matrix_taps["w1"], matrix_taps["w3"]):
-            fill_weight_group(weight, weight_prod, w1_tap)
-            fill_weight_group(weight, weight_prod, w3_tap)
-        for tap in matrix_taps["w2"]:
-            fill_weight_group(weight, weight_prod, tap)
+            taps.extend((w1_tap, w3_tap))
+        taps.extend(matrix_taps["w2"])
+        # A two-slot FIFO allows the next tile to arrive while the core uses
+        # the current tile. Await the second tile before freeing both tasks.
+        for index in range(0, len(taps), 2):
+            group = TaskGroup()
+            pair = taps[index:index + 2]
+            for pair_index, tap in enumerate(pair):
+                weight_prod.fill(weight, tap=tap, group=group,
+                                 wait=pair_index == len(pair) - 1)
+            group.finish()
         outputs.finish()
 
     runtime = Runtime(
