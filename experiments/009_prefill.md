@@ -34,6 +34,12 @@ token does not prove every intermediate is bit-identical.
 
 ## Why this is hard
 
+AMD's supported ONNX Runtime GenAI LLM path does not provide an off-the-shelf
+shortcut for this laptop: its [Ryzen AI 1.8 OGA documentation](https://ryzenai.docs.amd.com/en/main/hybrid_oga.html)
+explicitly excludes Phoenix/Hawk Point from both NPU-only and hybrid LLM
+execution. This experiment therefore uses custom IRON/XRT programs without
+changing the working driver or Ryzen AI installation.
+
 The current NPU chat processes the prompt one token at a time. At each model
 position it scans the 128 MiB embedding table, sends every recurrent or
 attention block its weights again, and starts many separate NPU programs. A
