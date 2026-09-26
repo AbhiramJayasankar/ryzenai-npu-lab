@@ -123,29 +123,43 @@ def main():
         projection_inputs = []
         projection_outputs = []
         conv_outputs_to_projection = []
+        conv_projected_outputs = []
+        ffn_norm_inputs = []
 
         def capture_projection(_module, inputs, output):
             projection_inputs.append(inputs[0][0, -1].float().cpu().numpy())
             projection_outputs.append(output[0, -1].float().cpu().numpy())
 
-        def capture_conv_output(_module, inputs, _output):
+        def capture_conv_output(_module, inputs, output):
             conv_outputs_to_projection.append(inputs[0][0, -1].float().cpu().numpy())
+            conv_projected_outputs.append(output[0, -1].float().cpu().numpy())
+
+        def capture_ffn_norm(_module, inputs, _output):
+            ffn_norm_inputs.append(inputs[0][0, -1].float().cpu().numpy())
 
         hook = model.model.layers[0].conv.in_proj.register_forward_hook(capture_projection)
         conv_hook = model.model.layers[0].conv.out_proj.register_forward_hook(
             capture_conv_output
+        )
+        ffn_hook = model.model.layers[0].ffn_norm.register_forward_hook(
+            capture_ffn_norm
         )
         try:
             _, reference_tokens, snapshots = generate(model, input_ids, 3, capture=True)
         finally:
             hook.remove()
             conv_hook.remove()
+            ffn_hook.remove()
         for step in range(3):
             snapshots[f"step{step}_first_projection_input"] = projection_inputs[step]
             snapshots[f"step{step}_first_projection_output"] = projection_outputs[step]
             snapshots[f"step{step}_conv0_output_projection_input"] = (
                 conv_outputs_to_projection[step]
             )
+            snapshots[f"step{step}_conv0_output_projection_output"] = (
+                conv_projected_outputs[step]
+            )
+            snapshots[f"step{step}_conv0_residual"] = ffn_norm_inputs[step]
         snapshots["first_projection_weight"] = (
             model.model.layers[0].conv.in_proj.weight.detach().float().cpu().numpy()
         )
@@ -155,6 +169,17 @@ def main():
         snapshots["conv0_depthwise_weight"] = (
             model.model.layers[0].conv.conv.weight[:, 0, :].detach().float().cpu().numpy()
         )
+        snapshots["conv0_output_projection_weight"] = (
+            model.model.layers[0].conv.out_proj.weight.detach().float().cpu().numpy()
+        )
+        snapshots["first_ffn_norm_weight"] = (
+            model.model.layers[0].ffn_norm.weight.detach().float().cpu().numpy()
+        )
+        for name in ("w1", "w2", "w3"):
+            snapshots[f"first_ffn_{name}_weight"] = (
+                getattr(model.model.layers[0].feed_forward, name)
+                .weight.detach().float().cpu().numpy()
+            )
         snapshots["prompt_ids"] = input_ids.cpu().numpy()
         snapshots["reference_token_ids"] = np.asarray(reference_tokens)
         args.reference.parent.mkdir(parents=True, exist_ok=True)
