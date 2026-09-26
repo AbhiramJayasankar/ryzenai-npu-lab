@@ -134,5 +134,3 @@ def attention_context_fixed64(qkv_and_hidden: In, past_cache: In,
                                  qkv_fifo.prod(), old_fifo.prod(),
                                  packed_fifo.cons(), next_fifo.cons()])
     return Program(iron.get_current_device(), runtime, workers=[worker]).resolve_program()
-
-\n

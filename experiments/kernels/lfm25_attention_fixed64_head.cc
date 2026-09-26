@@ -95,5 +95,3 @@ extern "C" void lfm25_attention_fixed64_head(
   }
   aie::set_rounding(saved_rounding);
 }
-
-\n
