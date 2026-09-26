@@ -15,6 +15,7 @@ Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This reposi
 - [Five more AMD demo models](experiments/003_model_compatibility.md) ran on the NPU: MobileNetV2, ResNet50, nano-YOLOX, RetinaFace, and PointPainting segmentation. The NPU was faster for four in short same-input comparisons; RetinaFace was slightly slower.
 - [Experiment 004](experiments/004_why_models_run.md) is a hands-on guide to model operators, quantization, and CPU/NPU assignment. It demonstrates why listing an NPU execution provider does not prove that the NPU performed inference.
 - [Experiment 005](experiments/005_low_level_access.md) confirms that custom BF16 and INT16 programs can run directly through IRON/XRT on this Phoenix NPU. Its exploratory matrix benchmark shows the benefit of larger jobs and the overhead of tiny ones.
+- [Experiment 006](experiments/006_lfm25_full_npu.md) runs LFM2.5-230M model arithmetic entirely on the NPU for a fixed 21-token prompt and two generated tokens. NPU token selections match the CPU reference; the prototype is still much slower than CPU/GPU and power comparison remains open.
 
 Run `scripts/check_npu.ps1` in PowerShell to check the device and driver again. The script only reads system information.
 
@@ -28,6 +29,6 @@ The laptop also has an older Conda-compatible installation, so an unqualified `c
 
 ## Next milestone
 
-Measure power use with a reliable sensor and evaluate task accuracy on labeled data. AMD's guide calls for the `X1` target on this hardware. Quicktest, live YOLOv8, and five additional quantized vision models have now confirmed NPU execution. Inference speed varies by model.
+Improve the LFM2.5 NPU runtime's latency and measure whole-laptop power on battery against matched CPU/GPU runs. AMD's guide calls for the `X1` target on this hardware. The earlier vision experiments remain available for model-compatibility and operator-placement study.
 
 Experiment notes and measurements will live in [`experiments/`](experiments/README.md). Keep downloaded models, datasets, caches, and secrets out of Git.

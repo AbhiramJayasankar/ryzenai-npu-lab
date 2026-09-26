@@ -342,6 +342,53 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     and **49 ms** head call. Those calls include Python/XRT dispatch and
     substantial NPU context switching. This covers position zero only;
     the other 20 prompt positions are not yet chained on NPU.
+21. **Complete prompt and two generated tokens with NPU model arithmetic:**
+    [`006_lfm25_prompt_sequence_reference.py`](006_lfm25_prompt_sequence_reference.py)
+    captures a sequential CPU BF16 reference for all **21** prompt
+    positions and two following decode positions. Sequential CPU and the
+    earlier batched CPU prefill differ slightly in BF16 arithmetic, but
+    select the same token IDs. The NPU
+    [`006_lfm25_npu_prompt_sequence.py`](006_lfm25_npu_prompt_sequence.py)
+    starts from prompt token IDs, uses NPU DMA for every prompt embedding,
+    builds recurrent and KV state from empty buffers, and feeds its own
+    selected embedding and state to each decode position. With all 21
+    prompt positions and two decode positions, it selected **2,797 →
+    38,785 → 562**, matching the sequential CPU reference. All three
+    returned embedding rows matched the checkpoint exactly. Across the
+    23 positions, maximum per-position hidden error was **0.25** and
+    maximum recurrent/KV state error was **0.18359375** versus sequential
+    CPU BF16. Warmed wall time was **10.08 s** for prompt plus first
+    selection and **11.21 s** for prompt plus two decode positions and
+    three selections; each timing came from one measured run after a warm
+    run. The CPU provides token IDs, weights, and precomputed positional
+    constants, and separately checks results; it performs no activation or
+    model-layer arithmetic in the NPU execution path. This is a fixed
+    21-token prompt and two-token generation proof, not a general or fast
+    inference runtime.
+
+The matched sequential 23-position benchmark
+[`006_lfm25_sequence_benchmark.py`](006_lfm25_sequence_benchmark.py)
+feeds the same 21 prompt IDs and two generated IDs to PyTorch CPU and GPU.
+After one warm run, three measured runs gave:
+
+| Device | Prompt 21 positions | Two decode positions | Total 23 positions |
+| --- | ---: | ---: | ---: |
+| CPU, 1 thread | 1,605 ms | 147 ms | 1,750 ms |
+| CPU, 2 threads | 1,054 ms | 102 ms | 1,154 ms |
+| CPU, 4 threads | 931 ms | 84 ms | 1,015 ms |
+| CPU, 8 threads | 891 ms | 99 ms | 995 ms |
+| RTX 4060 GPU | 609 ms | 61 ms | 670 ms |
+| Phoenix NPU prototype | — | — | 11,208 ms |
+
+The NPU row is one measured run after one warm run and includes its 21
+prompt positions, two generated positions, and three vocabulary selections;
+the CPU/GPU rows execute the same positions one token at a time and report
+the final three selections without forcing their results into the model.
+All three devices selected **2,797 → 38,785 → 562**. The NPU path is about
+**11× slower than the best measured CPU total** and **17× slower than the
+GPU total**. This is a Python/XRT prototype comparison, not a hardware
+efficiency ceiling. Batched PyTorch CPU/GPU prefill is faster still, as
+the earlier baseline table shows.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -355,28 +402,25 @@ weight, so the current kernel schedules 64-output strips within one invocation.
 The NPU timings include the Python/XRT call, dispatch, transfer, execution,
 and completion, with compiled binaries and allocated input buffers warmed.
 Summing standalone timings is not a valid full-model performance estimate.
-The fused-head two-token full-chain test uses CPU-created reference fixtures
-for the initial embedding and prompt convolution/KV states. Subsequent state
-and the next token's embedding are NPU-produced. Prompt prefill remains
-CPU-created, so this is not yet a self-contained NPU inference runtime.
+The earlier fused-head two-token test uses CPU-created prompt fixtures. The
+new 23-position sequence instead builds prompt state and all model
+activations on NPU; the CPU reference is used only for validation. Host-side
+tokenization, weight loading, positional-constant preparation, and XRT
+dispatch remain.
 
-## Remaining model computations
+## Remaining runtime and efficiency work
 
-The immediate correctness gate is **the remaining prompt prefill**. Position
-zero now starts from token ID and empty state entirely on the NPU, but the
-other 20 prompt positions still use CPU-generated fixture state in the
-decode experiment.
-The current attention context program compiles separately for each prior
-cache length (currently tested at 21 and 22; the kernel's local score
-storage bounds it to 127 prior positions). Efficient variable-length
-attention and KV storage are required for longer generation. The output
-head adds three compiled programs and triggers Phoenix context-cache
-eviction. The four-core fused head reduces that to one program and supplies
-the next embedding. It still streams about 134 MB of tied weights each token.
-The
-recurrent and attention programs also stream all
-weights every call and use one compute core each. Four-core sharding,
-kernel fusion, and persistent data should reduce latency and energy.
+The 23-position proof is still far slower than the CPU and GPU baselines.
+The attention context program compiles separately for each prior cache
+length (now tested from 1 through 22; local score storage bounds it to
+127 prior positions). Embedding DMA also specializes to each token ID.
+Efficient variable-length attention and KV storage, dynamic embedding
+selection, and longer-generation support are needed for a general runtime.
+Phoenix context-cache eviction is visible in the wall times. The four-core
+fused head supplies the next embedding in one program but still streams
+about 134 MB of tied weights per selection. Recurrent and attention
+programs stream weights each call and use one compute core each. More
+sharding, fusion, and persistent data should reduce latency and energy.
 
 ## Power measurement
 
@@ -404,6 +448,9 @@ ignored environments:
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_cpu_two_recurrent_layers.py --threads 8 --repeats 200
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_prompt_first_reference.py
+& .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_prompt_sequence_reference.py --decode 2
+& .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_sequence_benchmark.py --device cpu --cpu-threads 8 --repeats 3
+& .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_sequence_benchmark.py --device cuda --repeats 3
 foreach ($layer in 4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py --layer $layer }
 foreach ($layer in 2,4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py --layer $layer --step 2 }
 
@@ -435,4 +482,5 @@ foreach ($layer in 2,4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experim
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --fused-head --tokens 2
 foreach ($layer in 2,4,6,8,10,12) { & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_first.py --layer $layer }
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_prompt_first_stack.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_prompt_sequence.py --positions 21 --decode 2 --repeats 1
 ```
