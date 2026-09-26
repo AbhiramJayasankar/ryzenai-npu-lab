@@ -442,7 +442,8 @@ comparison.
 The 23-position proof is still far slower than the CPU and GPU baselines.
 The attention context program compiles separately for each prior cache
 length (now tested from 1 through 22; local score storage bounds it to
-127 prior positions). Embedding DMA also specializes to each token ID.
+95 prior positions in practice: a 96-prior-token program exceeds Phoenix
+tile memory). Embedding DMA also specializes to each token ID.
 Efficient variable-length attention and KV storage, dynamic embedding
 selection, and longer-generation support are needed for a general runtime.
 Phoenix context-cache eviction is visible in the wall times. The four-core

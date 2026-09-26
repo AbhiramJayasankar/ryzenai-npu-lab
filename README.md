@@ -1,10 +1,12 @@
 # Ryzen AI NPU Lab
 
-**Current result:** A fixed 21-token LFM2.5-230M prompt and two generated
-positions run with all model arithmetic on the Phoenix NPU. The NPU selects
-the same three tokens as the CPU BF16 reference. See the
-[current-state handoff](experiments/006_handoff.md) for setup, exact scope,
-performance, power comparison, limitations, and future experiment ideas.
+**Current result:** A short-context [interactive LFM2.5-230M chat runner](experiments/007_lfm25_chat.md)
+accepts new text prompts and performs every model calculation on the Phoenix
+NPU. It matches CPU BF16 token selections on two tested prompts and reuses
+NPU state across turns when the token prefix is unchanged. On the configured
+laptop, launch it with `& .\scripts\chat_lfm25_npu.ps1` from this repository's
+root. The [experiment 006 handoff](experiments/006_handoff.md) records the
+earlier fixed-sequence proof, setup, speed, and power comparison.
 
 Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This repository will contain our own scripts, measurements, and conclusions. AMD's [RyzenAI-SW examples](https://github.com/amd/RyzenAI-SW) are a reference, not part of this repository.
 
@@ -35,9 +37,10 @@ The laptop also has an older Conda-compatible installation, so an unqualified `c
 
 ## Where to continue
 
-The current LFM2.5 proof and battery comparison are recorded. Further speed
-and power work is listed in the [handoff](experiments/006_handoff.md) for a
-future session. AMD's guide calls for the `X1` target on this hardware. The
+The current LFM2.5 proof and battery comparison are recorded. The
+[chat experiment](experiments/007_lfm25_chat.md) explains how to run short
+conversations and where speed and context still need work. AMD's guide calls
+for the `X1` target on this hardware. The
 earlier vision experiments remain available for model compatibility and
 operator placement study.
 

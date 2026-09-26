@@ -13,4 +13,6 @@
 [Experiment 006](006_lfm25_full_npu.md) tracks the all-NPU LFM2.5-230M implementation, CPU/GPU baselines, and verified custom model operations on the Phoenix NPU.
 For the present state and a self-contained continuation guide, start with the [experiment 006 handoff](006_handoff.md).
 
+[Experiment 007](007_lfm25_chat.md) packages the model into a short-context interactive NPU chat runner and tests new prompts against sequential CPU BF16 token selections.
+
 For each experiment, record the model and source, software and driver versions, input shape, CPU/NPU settings, warm-up and measurement method, operator placement, raw results, and a short conclusion. Commit small result files and notes; keep downloaded models and datasets outside Git.

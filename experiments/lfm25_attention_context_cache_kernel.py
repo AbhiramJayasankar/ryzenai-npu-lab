@@ -22,8 +22,8 @@ def attention_context_cache(
     *,
     past_length: CompileTime[int] = 21,
 ):
-    if not 1 <= past_length < 128:
-        raise ValueError("Current attention kernel supports 1-127 prior tokens")
+    if not 1 <= past_length < 96:
+        raise ValueError("Current attention kernel supports 1-95 prior tokens")
     past_head = 2 * past_length * 64
     next_head = 2 * (past_length + 1) * 64
     qkv_hidden_ty = np.ndarray[(3072,), np.dtype[bfloat16]]

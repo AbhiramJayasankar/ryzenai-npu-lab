@@ -21,6 +21,7 @@ from lfm25_checkpoint import (
     pack_recurrent_weights, recurrent_layer_data,
 )
 from lfm25_embedding_dma_kernel import embedding_dma
+from lfm25_embedding_dynamic_kernel import embedding_dma_dynamic
 from lfm25_fused_vocab_4core_kernel import fused_vocab_4core
 from lfm25_pack_block_input_kernel import pack_block_input
 from lfm25_single_program_block_kernel import recurrent_block
@@ -54,6 +55,8 @@ def main():
     parser.add_argument("--decode", type=int, choices=(0, 1, 2), default=0)
     parser.add_argument("--fixed-cache", action="store_true",
                         help="Reuse one attention context program for all cache lengths")
+    parser.add_argument("--dynamic-embedding", action="store_true",
+                        help="Select prompt embeddings from runtime token tensors")
     parser.add_argument("--repeats", type=int, default=2)
     args = parser.parse_args()
     if args.decode and args.positions != 21:
@@ -100,6 +103,8 @@ def main():
                     expected[pos][layer]["cache"] = np.stack([keys, values], axis=1).reshape(-1)
 
     inputs = [iron.zeros((1024,), dtype=bfloat16, device="npu") for _ in range(args.positions)]
+    prompt_token_tensors = [iron.tensor(np.array([token], dtype=np.int32), dtype=np.int32)
+                            for token in prompt_ids] if args.dynamic_embedding else []
     layers = []
     for index, kind in enumerate(LAYER_TYPES):
         info = {"kind": kind,
@@ -149,7 +154,10 @@ def main():
             position_start = time.perf_counter()
             if pos < args.positions:
                 operation_start = time.perf_counter()
-                embedding_dma(table, inputs[pos], token_id=int(prompt_ids[pos]))
+                if args.dynamic_embedding:
+                    embedding_dma_dynamic(table, inputs[pos], prompt_token_tensors[pos])
+                else:
+                    embedding_dma(table, inputs[pos], token_id=int(prompt_ids[pos]))
                 timing["embedding_ms"] += (time.perf_counter() - operation_start) * 1000
                 hidden = inputs[pos]
             else:
@@ -250,6 +258,7 @@ def main():
         "prompt_positions": args.positions,
         "decode_positions": args.decode,
         "fixed_cache": args.fixed_cache,
+        "dynamic_embedding": args.dynamic_embedding,
         "warmed_total_median_ms": statistics.median(run["total_ms"] for run in elapsed),
         "timing_median_ms": {
             key: statistics.median(run[key] for run in elapsed)
