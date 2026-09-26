@@ -120,6 +120,17 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
    a warmed one-core call took **4.16 ms**. It establishes a workable pattern
    for composing a whole block, though this one-core proof is not yet the
    optimized four-core path.
+8. **Single-program convolution prefix:**
+   [`006_lfm25_npu_norm_proj_conv.py`](006_lfm25_npu_norm_proj_conv.py)
+   extends the same one-core program through the recurrent convolution gate
+   and state update. Two input DMA streams carry the padded hidden/state
+   data and grouped weight tiles; each weight group is explicitly awaited
+   before its descriptor is recycled. The gated output, next convolution
+   state, and retained depthwise weights matched the CPU BF16 fixture
+   exactly. Median warmed call: **5.71 ms** for normalization, the full
+   `1024 -> 3072` projection, and recurrent convolution together. This is
+   a first-token correctness and latency check; the two-token test above
+   remains the reference for NPU-produced state crossing token calls.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -188,4 +199,5 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_bf16_gemv.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_conv_gate_packed_state.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_gemv.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_proj_conv.py
 ```
