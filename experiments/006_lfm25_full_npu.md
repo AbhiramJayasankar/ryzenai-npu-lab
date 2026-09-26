@@ -201,10 +201,15 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     supplied by the CPU fixture, the new key and value matched the full-model
     CPU cache exactly. The resulting 1,024-value context differed from the
     full-model CPU context by at most **0.000488**; its warmed call took
-    **5.15 ms**. The NPU softmax uses a bounded exponential approximation.
+    about **5.1-5.3 ms**. The NPU softmax uses a bounded exponential approximation.
+    An NPU cache-append program adds the new NPU-generated key and value
+    to the 21-position cache. Its entire resulting 22-position KV cache
+    matched the CPU full-model cache **exactly**, with a warmed median
+    **1.08 ms** for the append call.
     These two calls do not yet include the attention output projection,
-    residual, or FFN. The earlier KV cache has not yet been built or
-    updated by the NPU, so this is a partial attention decode check.
+    residual, or FFN. The earlier KV cache still comes from CPU prompt
+    prefill, and a next-token call consuming the NPU-updated cache is not
+    yet implemented, so this remains a partial attention decode check.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -230,8 +235,9 @@ The next efficiency step is to distribute its projections across the four
 Phoenix compute cores while keeping one hardware context and NPU-resident
 state. The first convolution state still comes from a CPU reference fixture;
 prompt prefill must eventually produce it on the NPU.
-The first attention block now has NPU Q/K/V and context checks; it still needs
-an output projection, residual, FFN, and NPU-produced persistent KV cache.
+The first attention block now has NPU Q/K/V, context, and one KV-cache update
+checks; it still needs an output projection, residual, FFN, dynamic cache
+lengths across tokens, and NPU-produced prompt KV state.
 The other five attention blocks need the same path. The complete model
 additionally needs embedding
 lookup, final normalization, tied vocabulary projection, and NPU token
