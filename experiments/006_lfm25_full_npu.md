@@ -131,6 +131,29 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
    `1024 -> 3072` projection, and recurrent convolution together. This is
    a first-token correctness and latency check; the two-token test above
    remains the reference for NPU-produced state crossing token calls.
+9. **Complete first recurrent block in one NPU program:**
+   [`006_lfm25_npu_single_program_block.py`](006_lfm25_npu_single_program_block.py)
+   streams all five real projection matrices, both RMSNorm scales, and the
+   recurrent state through **two input DMA streams** into one AI Engine core.
+   Its Worker performs the full normalization, convolution and state update,
+   residual operations, and gated FFN without returning an intermediate to
+   the CPU. It materializes BF16 values at the model's arithmetic boundaries.
+   A warmed first-block invocation took a median **18.1 ms**. For that decode
+   token, all 1,024 final hidden values and all 3,072 convolution state values
+   matched the CPU BF16 reference exactly. The next token's hidden input came
+   from the CPU reference fixture (the preceding model layers do not exist
+   yet), while an **NPU packing kernel** combined it with the first token's
+   NPU-produced convolution state. Its state was exact and 96.0% of final
+   values were bit-exact, with maximum difference **0.000244**. No CPU model
+   arithmetic was used between the two block invocations.
+
+   The earlier 17-call path took roughly 322 ms in a later run and the 11-call
+   path took 130-184 ms across runs. The one-program result removes the
+   Phoenix context-cache cliff for this block, though it uses only one core
+   and still streams roughly 24 MB of projection and scale data each call.
+   It is a **single-block decode check**, not a full model speed or power
+   result. The first token's initial convolution state still comes from a
+   reference fixture; prompt prefill is not implemented.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -150,9 +173,11 @@ exists yet.
 
 ## Remaining model computations
 
-The first recurrent block needs one composed NPU program that avoids expensive
-switches among the current kernels. Its first convolution state comes from a
-CPU reference fixture; subsequent state remains on the NPU across calls.
+The first recurrent block now has a one-program correctness implementation.
+The next efficiency step is to distribute its projections across the four
+Phoenix compute cores while keeping one hardware context and NPU-resident
+state. The first convolution state still comes from a CPU reference fixture;
+prompt prefill must eventually produce it on the NPU.
 Six attention blocks also need Q/K/V projections, per-head norms,
 rotary position encoding, persistent KV cache, score reduction, softmax, value
 mixing, and output projection. The complete path additionally needs embedding
@@ -200,4 +225,5 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_conv_gate_packed_state.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_gemv.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_proj_conv.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_single_program_block.py
 ```
