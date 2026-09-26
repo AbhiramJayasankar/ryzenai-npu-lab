@@ -32,7 +32,7 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
     generated = []
     snapshots = {}
     past = None
-    hook = None
+    hooks = []
     if capture:
         def capture_attention_context(_module, inputs):
             if step in (0, 1, 2):
@@ -40,9 +40,17 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
                     inputs[0][0, -1].float().cpu().numpy().copy()
                 )
 
-        hook = model.model.layers[2].self_attn.out_proj.register_forward_pre_hook(
+        hooks.append(model.model.layers[2].self_attn.out_proj.register_forward_pre_hook(
             capture_attention_context
-        )
+        ))
+
+        def capture_final_raw(_module, inputs):
+            if step in (0, 1, 2):
+                snapshots[f"step{step}_hidden14_raw"] = (
+                    inputs[0][0, -1].float().cpu().numpy().copy()
+                )
+
+        hooks.append(model.model.embedding_norm.register_forward_pre_hook(capture_final_raw))
     with torch.inference_mode():
         for step in range(steps):
             synchronize(device)
@@ -59,26 +67,19 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
                 snapshots[f"step{step}_logits"] = (
                     output.logits[0, -1].float().cpu().numpy()
                 )
-                snapshots[f"step{step}_conv0_state"] = (
-                    output.past_key_values.layers[0].conv_states[0]
-                    .float()
-                    .cpu()
-                    .numpy()
-                    .copy()
-                )
-                snapshots[f"step{step}_conv1_state"] = (
-                    output.past_key_values.layers[1].conv_states[0]
-                    .float()
-                    .cpu()
-                    .numpy()
-                    .copy()
-                )
-                snapshots[f"step{step}_attn2_keys"] = (
-                    output.past_key_values.layers[2].keys.float().cpu().numpy().copy()
-                )
-                snapshots[f"step{step}_attn2_values"] = (
-                    output.past_key_values.layers[2].values.float().cpu().numpy().copy()
-                )
+                for layer_idx, layer_type in enumerate(model.config.layer_types):
+                    cache_layer = output.past_key_values.layers[layer_idx]
+                    if layer_type == "conv":
+                        snapshots[f"step{step}_conv{layer_idx}_state"] = (
+                            cache_layer.conv_states[0].float().cpu().numpy().copy()
+                        )
+                    else:
+                        snapshots[f"step{step}_attn{layer_idx}_keys"] = (
+                            cache_layer.keys.float().cpu().numpy().copy()
+                        )
+                        snapshots[f"step{step}_attn{layer_idx}_values"] = (
+                            cache_layer.values.float().cpu().numpy().copy()
+                        )
                 for layer, hidden in enumerate(output.hidden_states):
                     snapshots[f"step{step}_hidden{layer}"] = (
                         hidden[0, -1].float().cpu().numpy()
@@ -88,7 +89,7 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
             past = output.past_key_values
             if stop_at_eos and generated[-1] == model.config.eos_token_id:
                 break
-    if hook is not None:
+    for hook in hooks:
         hook.remove()
     return times, generated, snapshots
 

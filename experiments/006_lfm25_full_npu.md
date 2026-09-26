@@ -245,6 +245,34 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     attention tail. The near-additive total confirms the context-cache
     eviction was the main extra cost. This remains slower than the CPU's
     full-model decode and is not yet an end-to-end model runtime.
+15. **All 14 model blocks for one decode token:**
+    [`006_lfm25_npu_layer_stack.py`](006_lfm25_npu_layer_stack.py)
+    reuses the same five compiled NPU programs with each layer's own real
+    checkpoint weights. Every intermediate hidden vector stays on NPU.
+    The input embedding vector and the *prompt* convolution/KV states come
+    from the CPU reference fixture. Layer 13's output is compared with a
+    newly captured **pre-final-normalization** reference; the standard
+    `hidden14` fixture is already normalized. With the corrected comparison
+    and a SiLU approximation that covers measured later-layer inputs up to
+    about ±3.7, all 14 block outputs stayed within **0.015625** maximum
+    absolute error of the CPU BF16 reference. The warmed 14-block median
+    was **333 ms**. This is a single decode position with fixture-provided
+    prompt state, not an autonomous generation loop or tokens/s result.
+16. **Final normalization, vocabulary logits, and NPU token selection:**
+    [`006_lfm25_npu_output_head.py`](006_lfm25_npu_output_head.py)
+    first validated final RMSNorm and the tied 65,536-row vocabulary GEMV
+    with the CPU's raw last-block hidden vector. Final norm was exact;
+    logits were 99.99% bit-exact with maximum error **0.000977**. A streamed
+    NPU argmax selected the same next token, **38,785**, without CPU
+    selection. When connected to all 14 NPU blocks with `--head`, the final
+    normalized hidden vector differed by at most **0.125** and logits by
+    **0.1875** because small BF16 block differences propagated. NPU argmax
+    still selected **38,785**, matching the CPU. The warmed full chain
+    median was about **498 ms** in that run, with pronounced context
+    eviction after adding three more compiled programs. This verifies
+    one token's model arithmetic after the reference embedding/state is on
+    NPU. It does **not** yet prove NPU prompt prefill or a multi-token
+    generation loop.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -257,32 +285,24 @@ weight, so the current kernel schedules 64-output strips within one invocation.
 
 The NPU timings include the Python/XRT call, dispatch, transfer, execution,
 and completion, with compiled binaries and allocated input buffers warmed.
-The three-layer chain is still a partial model, and summing standalone timings
-is not a valid full-model performance estimate. Current tests use CPU-created
-reference fixtures for the initial hidden vector and convolution state; no
-full-NPU decode runtime exists yet.
+Summing standalone timings is not a valid full-model performance estimate.
+The one-token full-chain test uses CPU-created reference fixtures for the
+initial embedding vector, convolution state, and KV cache. It is not yet a
+self-contained NPU inference runtime.
 
 ## Remaining model computations
 
-The first two recurrent blocks now have a reusable one-program correctness
-implementation, connected by NPU-side packing.
-The next efficiency step is to distribute its projections across the four
-Phoenix compute cores while keeping one hardware context and NPU-resident
-state. The first convolution state still comes from a CPU reference fixture;
-prompt prefill must eventually produce it on the NPU.
-The first attention block now has a full one-token NPU correctness path. It
-still needs dynamic cache lengths across tokens, NPU-produced prompt KV
-state, and better use of four compute cores. The three-layer path now uses
-five compiled programs and avoids the observed context-cache eviction.
-The other five attention blocks need the same path. The complete model
-additionally needs embedding
-lookup, final normalization, tied vocabulary projection, and NPU token
-selection. Prompt prefill must initialize convolution and KV state correctly.
-
-The next correctness gate is one attention block, followed by whole-model
-logits under a fixed token sequence. A full decode loop also needs state
-initialization from prompt prefill. Output-channel sharding, kernel fusion,
-and persistent weights should reduce dispatch and transfer cost.
+The immediate correctness gate is a **second decode token that consumes the
+NPU-produced convolution and KV states**. The current attention context
+program is specialized to a 21-token prior cache, so it must support a
+22-token cache for that test and eventually variable lengths. A fully
+independent runtime also needs NPU embedding lookup and prompt prefill to
+initialize every convolution and KV state. The current output head adds
+three compiled programs and triggers Phoenix context-cache eviction; fusing
+final normalization and token selection with a four-core vocabulary path
+is an important efficiency step. More broadly, the one-core recurrent and
+attention programs stream weights every call. Output-channel sharding,
+kernel fusion, and persistent data should reduce latency and energy.
 
 ## Power measurement
 
@@ -309,6 +329,7 @@ ignored environments:
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_baseline.py --device cuda --tokens 24
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_cpu_two_recurrent_layers.py --threads 8 --repeats 200
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py
+foreach ($layer in 4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py --layer $layer }
 
 & 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1' -Arch amd64
 . .\cache\iron\mlir-aie\iron_env.ps1
@@ -329,4 +350,5 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_block.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_three_layers.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_three_layers.py --fused
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --head
 ```

@@ -25,9 +25,13 @@ def rms_norm(x, gamma, eps):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / "cache" / "lfm25-attention2-reference.npz")
+    parser.add_argument("--layer", type=int, default=2)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     config = AutoConfig.from_pretrained(MODEL, local_files_only=True)
+    if config.layer_types[args.layer] != "full_attention":
+        parser.error(f"Layer {args.layer} is not attention")
+    output_path = args.output or ROOT / "cache" / f"lfm25-attention{args.layer}-reference.npz"
     tokenizer = AutoTokenizer.from_pretrained(MODEL, local_files_only=True)
     prompt_ids = tokenizer.apply_chat_template(
         [{"role": "user", "content": PROMPT}],
@@ -37,8 +41,8 @@ def main():
     )["input_ids"]
     position = prompt_ids.shape[-1]
     with np.load(ROOT / "cache" / "lfm25-reference-cpu.npz") as reference:
-        hidden = torch.tensor(reference["step1_hidden2"], dtype=torch.bfloat16).reshape(1, 1, 1024)
-    prefix = "model.layers.2."
+        hidden = torch.tensor(reference[f"step1_hidden{args.layer}"], dtype=torch.bfloat16).reshape(1, 1, 1024)
+    prefix = f"model.layers.{args.layer}."
     with safe_open(MODEL / "model.safetensors", framework="pt", device="cpu") as checkpoint:
         get = lambda name: checkpoint.get_tensor(prefix + name)
         operator_gamma = get("operator_norm.weight")
@@ -76,9 +80,9 @@ def main():
         "k": k,
         "v": v,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.output, **{name: value.float().numpy() for name, value in tensors.items()})
-    print(json.dumps({"position": position, "q_shape": list(q.shape), "k_shape": list(k.shape), "v_shape": list(v.shape), "reference": str(args.output)}, indent=2))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(output_path, **{name: value.float().numpy() for name, value in tensors.items()})
+    print(json.dumps({"layer": args.layer, "position": position, "q_shape": list(q.shape), "k_shape": list(k.shape), "v_shape": list(v.shape), "reference": str(output_path)}, indent=2))
 
 
 if __name__ == "__main__":
