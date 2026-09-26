@@ -16,13 +16,12 @@ static float exp_negative(float x) {
   return polynomial * power_two;
 }
 
-extern "C" void lfm25_attention_context_head(
+static void compute_attention_context_head(
     const bfloat16 *qkv, const bfloat16 *past_cache,
-    bfloat16 *context, int32_t kv_head) {
+    bfloat16 *context, int32_t kv_head, int32_t past_length) {
   const auto saved_rounding =
       aie::swap_rounding(aie::rounding_mode::conv_even);
-  constexpr int past_length = 21;
-  constexpr int total_length = past_length + 1;
+  const int total_length = past_length + 1;
   const bfloat16 *past_keys = past_cache;
   const bfloat16 *past_values = past_cache + past_length * 64;
   const bfloat16 *new_key = qkv + 1024 + kv_head * 64;
@@ -30,7 +29,7 @@ extern "C" void lfm25_attention_context_head(
   for (int group_head = 0; group_head < 2; ++group_head) {
     const int query_head = kv_head * 2 + group_head;
     const bfloat16 *query = qkv + query_head * 64;
-    float scores[total_length];
+    float scores[128];
     float maximum = -1.0e30f;
     for (int token = 0; token < total_length; ++token) {
       const bfloat16 *key = token < past_length
@@ -51,7 +50,7 @@ extern "C" void lfm25_attention_context_head(
       scores[token] = exp_negative(scores[token] - maximum);
       total += scores[token];
     }
-    bfloat16 probability[total_length];
+    bfloat16 probability[128];
     for (int token = 0; token < total_length; ++token)
       probability[token] = static_cast<bfloat16>(scores[token] / total);
     for (int dim = 0; dim < 64; ++dim) {
@@ -67,4 +66,17 @@ extern "C" void lfm25_attention_context_head(
     }
   }
   aie::set_rounding(saved_rounding);
+}
+
+extern "C" void lfm25_attention_context_head(
+    const bfloat16 *qkv, const bfloat16 *past_cache,
+    bfloat16 *context, int32_t kv_head) {
+  compute_attention_context_head(qkv, past_cache, context, kv_head, 21);
+}
+
+extern "C" void lfm25_attention_context_head_dynamic(
+    const bfloat16 *qkv, const bfloat16 *past_cache,
+    bfloat16 *context, int32_t kv_head, int32_t past_length) {
+  compute_attention_context_head(qkv, past_cache, context, kv_head,
+                                 past_length);
 }

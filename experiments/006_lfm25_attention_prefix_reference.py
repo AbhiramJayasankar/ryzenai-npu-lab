@@ -26,12 +26,14 @@ def rms_norm(x, gamma, eps):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--layer", type=int, default=2)
+    parser.add_argument("--step", type=int, choices=(1, 2), default=1)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     config = AutoConfig.from_pretrained(MODEL, local_files_only=True)
     if config.layer_types[args.layer] != "full_attention":
         parser.error(f"Layer {args.layer} is not attention")
-    output_path = args.output or ROOT / "cache" / f"lfm25-attention{args.layer}-reference.npz"
+    suffix = "" if args.step == 1 else f"-step{args.step}"
+    output_path = args.output or ROOT / "cache" / f"lfm25-attention{args.layer}{suffix}-reference.npz"
     tokenizer = AutoTokenizer.from_pretrained(MODEL, local_files_only=True)
     prompt_ids = tokenizer.apply_chat_template(
         [{"role": "user", "content": PROMPT}],
@@ -39,9 +41,9 @@ def main():
         return_dict=True,
         return_tensors="pt",
     )["input_ids"]
-    position = prompt_ids.shape[-1]
+    position = prompt_ids.shape[-1] + args.step - 1
     with np.load(ROOT / "cache" / "lfm25-reference-cpu.npz") as reference:
-        hidden = torch.tensor(reference[f"step1_hidden{args.layer}"], dtype=torch.bfloat16).reshape(1, 1, 1024)
+        hidden = torch.tensor(reference[f"step{args.step}_hidden{args.layer}"], dtype=torch.bfloat16).reshape(1, 1, 1024)
     prefix = f"model.layers.{args.layer}."
     with safe_open(MODEL / "model.safetensors", framework="pt", device="cpu") as checkpoint:
         get = lambda name: checkpoint.get_tensor(prefix + name)
@@ -82,7 +84,7 @@ def main():
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output_path, **{name: value.float().numpy() for name, value in tensors.items()})
-    print(json.dumps({"layer": args.layer, "position": position, "q_shape": list(q.shape), "k_shape": list(k.shape), "v_shape": list(v.shape), "reference": str(output_path)}, indent=2))
+    print(json.dumps({"layer": args.layer, "step": args.step, "position": position, "q_shape": list(q.shape), "k_shape": list(k.shape), "v_shape": list(v.shape), "reference": str(output_path)}, indent=2))
 
 
 if __name__ == "__main__":

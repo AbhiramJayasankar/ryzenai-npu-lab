@@ -273,6 +273,22 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     one token's model arithmetic after the reference embedding/state is on
     NPU. It does **not** yet prove NPU prompt prefill or a multi-token
     generation loop.
+17. **Two decode tokens using NPU-produced recurrent and KV state:**
+    [`006_lfm25_npu_attention_two_tokens.py`](006_lfm25_npu_attention_two_tokens.py)
+    first verified layer 2 alone: its second call consumed the first call's
+    NPU-produced 22-position KV cache. Both KV updates matched the CPU
+    reference **exactly**; second-token hidden error was at most **0.000732**.
+    The full [`006_lfm25_npu_layer_stack.py --head --tokens 2`](006_lfm25_npu_layer_stack.py)
+    then chained all 14 layers and the output head for two decode steps.
+    Token 2 consumed **every recurrent and attention state produced by token
+    1 on the NPU**. Its raw last-block hidden error was **0.0234375** and
+    maximum logit error **0.21875**. NPU argmax selected token **562**, the
+    same as CPU; token 1 selected **38,785**, also matching CPU. The initial
+    prompt states and each token's embedding vector still came from the CPU
+    fixture. The two-token warmed total was about **1.11 s** in this run,
+    with extra Phoenix context evictions from separate 21- and 22-position
+    attention programs plus the output-head programs. This is a correctness
+    experiment, not a practical generation throughput result.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -286,22 +302,24 @@ weight, so the current kernel schedules 64-output strips within one invocation.
 The NPU timings include the Python/XRT call, dispatch, transfer, execution,
 and completion, with compiled binaries and allocated input buffers warmed.
 Summing standalone timings is not a valid full-model performance estimate.
-The one-token full-chain test uses CPU-created reference fixtures for the
-initial embedding vector, convolution state, and KV cache. It is not yet a
-self-contained NPU inference runtime.
+The two-token full-chain test uses CPU-created reference fixtures for the
+initial embedding vectors and prompt convolution/KV states. Subsequent state
+is NPU-produced, but the embedding lookup and prompt prefill are not yet on
+NPU; this is not yet a self-contained NPU inference runtime.
 
 ## Remaining model computations
 
-The immediate correctness gate is a **second decode token that consumes the
-NPU-produced convolution and KV states**. The current attention context
-program is specialized to a 21-token prior cache, so it must support a
-22-token cache for that test and eventually variable lengths. A fully
-independent runtime also needs NPU embedding lookup and prompt prefill to
-initialize every convolution and KV state. The current output head adds
-three compiled programs and triggers Phoenix context-cache eviction; fusing
-final normalization and token selection with a four-core vocabulary path
-is an important efficiency step. More broadly, the one-core recurrent and
-attention programs stream weights every call. Output-channel sharding,
+The immediate correctness gate is **NPU embedding lookup and prompt prefill**,
+so the runtime can start and continue without CPU-produced model state.
+The current attention context program compiles separately for each prior
+cache length (currently tested at 21 and 22; the kernel's local score
+storage bounds it to 127 prior positions). Efficient variable-length
+attention and KV storage are required for longer generation. The output
+head adds three compiled programs and triggers Phoenix context-cache
+eviction; fusing final normalization, vocabulary projection, token
+selection, and the winning token's tied embedding row is an important
+efficiency step. The recurrent and attention programs also stream all
+weights every call and use one compute core each. Four-core sharding,
 kernel fusion, and persistent data should reduce latency and energy.
 
 ## Power measurement
@@ -330,6 +348,7 @@ ignored environments:
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_cpu_two_recurrent_layers.py --threads 8 --repeats 200
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py
 foreach ($layer in 4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py --layer $layer }
+foreach ($layer in 2,4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py --layer $layer --step 2 }
 
 & 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1' -Arch amd64
 . .\cache\iron\mlir-aie\iron_env.ps1
@@ -351,4 +370,6 @@ foreach ($layer in 4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experimen
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_three_layers.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_three_layers.py --fused
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --head
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_two_tokens.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --head --tokens 2
 ```
