@@ -22,6 +22,7 @@ from lfm25_checkpoint import (
 )
 from lfm25_pack_block_input_kernel import pack_block_input
 from lfm25_bf16_gemv_kernel import bf16_bf16_gemv
+from lfm25_fused_vocab_kernel import fused_vocab
 from lfm25_rms_norm_kernel import rms_norm
 from lfm25_single_program_block_kernel import recurrent_block
 from ml_dtypes import bfloat16
@@ -53,12 +54,15 @@ def main():
     parser.add_argument("--through", type=int, choices=range(14), default=13)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--head", action="store_true", help="Also run final norm, vocabulary projection, and NPU argmax")
+    parser.add_argument("--fused-head", action="store_true", help="Use NPU final norm/argmax and return the winning embedding row")
     parser.add_argument("--tokens", type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("--repeats must be positive")
-    if args.head and args.through != 13:
-        parser.error("--head requires all 14 model blocks")
+    if args.head and args.fused_head:
+        parser.error("Choose either --head or --fused-head")
+    if (args.head or args.fused_head) and args.through != 13:
+        parser.error("An output head requires all 14 model blocks")
     if type(iron.get_current_device()).__name__ != "NPU1":
         raise RuntimeError("Expected Phoenix NPU1")
     checkpoint = BF16Checkpoint(ROOT / "cache" / "lfm25-230m" / "model.safetensors")
@@ -126,9 +130,14 @@ def main():
             if args.tokens == 2:
                 expected_normalized2 = reference["step2_hidden14"].reshape(-1)
                 expected_logits2 = reference["step2_logits"].reshape(-1)
+        if args.fused_head:
+            expected_token = int(np.argmax(reference["step1_logits"].reshape(-1)))
+            expected_next_embedding = reference["step2_hidden0"].reshape(-1)
+            if args.tokens == 2:
+                expected_token2 = int(np.argmax(reference["step2_logits"].reshape(-1)))
 
     initial = iron.tensor(initial_hidden, dtype=bfloat16)
-    initial2 = iron.tensor(second_hidden, dtype=bfloat16) if args.tokens == 2 else None
+    initial2 = iron.tensor(second_hidden, dtype=bfloat16) if args.tokens == 2 and not args.fused_head else None
     if args.head:
         final_gamma = iron.tensor(checkpoint.load("model.embedding_norm.weight"), dtype=bfloat16)
         vocab_weights = iron.tensor(checkpoint.load("model.embed_tokens.weight"), dtype=bfloat16)
@@ -139,9 +148,22 @@ def main():
             normalized2 = iron.zeros((1024,), dtype=bfloat16, device="npu")
             logits2 = iron.zeros((65536,), dtype=bfloat16, device="npu")
             token_id2 = iron.zeros((1,), dtype=np.int32, device="npu")
+    if args.fused_head:
+        embedding_table = checkpoint.load("model.embed_tokens.weight")
+        packed_head_weights = np.concatenate([
+            checkpoint.load("model.embedding_norm.weight").reshape(-1),
+            embedding_table.reshape(-1),
+        ]).astype(bfloat16)
+        fused_weights = iron.tensor(packed_head_weights, dtype=bfloat16)
+        fused_embedding = iron.zeros((1024,), dtype=bfloat16, device="npu")
+        fused_token = iron.zeros((1,), dtype=np.int32, device="npu")
+        if args.tokens == 2:
+            fused_embedding2 = iron.zeros((1024,), dtype=bfloat16, device="npu")
+            fused_token2 = iron.zeros((1,), dtype=np.int32, device="npu")
+            expected_next_embedding2 = embedding_table[expected_token2].astype(np.float32)
 
     def run_stack(step):
-        hidden = initial if step == 1 else initial2
+        hidden = initial if step == 1 else (fused_embedding if args.fused_head else initial2)
         elapsed = []
         for layer in layers:
             start = time.perf_counter()
@@ -177,6 +199,12 @@ def main():
             elapsed.append((time.perf_counter() - start) * 1000)
             start = time.perf_counter()
             vocab_argmax(logits_out, token_out)
+            elapsed.append((time.perf_counter() - start) * 1000)
+        if args.fused_head:
+            next_embedding = fused_embedding if step == 1 else fused_embedding2
+            selected_id = fused_token if step == 1 else fused_token2
+            start = time.perf_counter()
+            fused_vocab(hidden, fused_weights, next_embedding, selected_id)
             elapsed.append((time.perf_counter() - start) * 1000)
         return elapsed
 
@@ -261,6 +289,24 @@ def main():
                 "vocab_median_ms": statistics.median(run[1][15] for run in timed_runs),
                 "argmax_median_ms": statistics.median(run[1][16] for run in timed_runs),
             }
+    if args.fused_head:
+        result["fused_head"] = {
+            "cpu_token": expected_token,
+            "npu_token": int(fused_token.numpy()[0]),
+            "next_embedding_max_abs_error": float(np.max(np.abs(
+                fused_embedding.numpy().astype(np.float32) - expected_next_embedding
+            ))),
+            "median_ms": statistics.median(run[0][14] for run in timed_runs),
+        }
+        if args.tokens == 2:
+            result["second_token_fused_head"] = {
+                "cpu_token": expected_token2,
+                "npu_token": int(fused_token2.numpy()[0]),
+                "next_embedding_max_abs_error": float(np.max(np.abs(
+                    fused_embedding2.numpy().astype(np.float32) - expected_next_embedding2
+                ))),
+                "median_ms": statistics.median(run[1][14] for run in timed_runs),
+            }
     print(json.dumps(result, indent=2))
     if any(item["hidden_max_abs_error"] > 0.25 for item in reports):
         raise RuntimeError("Layer-stack hidden values diverged from CPU reference")
@@ -275,6 +321,16 @@ def main():
         raise RuntimeError("NPU output head exceeded BF16 tolerance")
     if args.tokens == 2 and args.head and result["second_token_head"]["npu_token"] != result["second_token_head"]["cpu_token"]:
         raise RuntimeError("NPU selected a different second token")
+    if args.fused_head and (
+        result["fused_head"]["npu_token"] != expected_token
+        or result["fused_head"]["next_embedding_max_abs_error"] != 0
+    ):
+        raise RuntimeError("Fused NPU head disagrees with the next token embedding")
+    if args.tokens == 2 and args.fused_head and (
+        result["second_token_fused_head"]["npu_token"] != expected_token2
+        or result["second_token_fused_head"]["next_embedding_max_abs_error"] != 0
+    ):
+        raise RuntimeError("Fused NPU head disagrees on the second token")
 
 
 if __name__ == "__main__":

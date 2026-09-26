@@ -289,6 +289,25 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     with extra Phoenix context evictions from separate 21- and 22-position
     attention programs plus the output-head programs. This is a correctness
     experiment, not a practical generation throughput result.
+18. **NPU-produced next-token embedding:**
+    [`006_lfm25_npu_fused_vocab.py`](006_lfm25_npu_fused_vocab.py)
+    verifies a one-core IRON program that combines final RMSNorm, tied
+    vocabulary scoring, argmax, and retention of the winning embedding row.
+    In isolation it selected token **38,785** and returned the exact BF16
+    embedding row, with a warmed median of **39.47 ms**. The full
+    [`006_lfm25_npu_layer_stack.py --fused-head --tokens 2`](006_lfm25_npu_layer_stack.py)
+    then fed this NPU-produced embedding into token 2, together with all
+    NPU-produced recurrent/KV states. The NPU selected tokens **38,785**
+    and **562**; both selected embedding rows exactly matched the CPU
+    reference. The second token's last-block hidden vector had maximum
+    absolute error **0.0234375** versus CPU BF16. The warmed two-token
+    chain took **1.07 s** median. Its two fused-head calls took about
+    **71 ms** and **76 ms** inside the full chain. The larger full-chain
+    values than the isolated head reflect context switching and cache
+    pressure; they are not core-only kernel timings. The NPU performs all
+    model arithmetic after the CPU-provided prompt state and initial token
+    embedding. This is still a fixed two-step correctness experiment, not
+    a self-contained prompt-to-generation runtime or an efficient decoder.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -302,23 +321,24 @@ weight, so the current kernel schedules 64-output strips within one invocation.
 The NPU timings include the Python/XRT call, dispatch, transfer, execution,
 and completion, with compiled binaries and allocated input buffers warmed.
 Summing standalone timings is not a valid full-model performance estimate.
-The two-token full-chain test uses CPU-created reference fixtures for the
-initial embedding vectors and prompt convolution/KV states. Subsequent state
-is NPU-produced, but the embedding lookup and prompt prefill are not yet on
-NPU; this is not yet a self-contained NPU inference runtime.
+The fused-head two-token full-chain test uses CPU-created reference fixtures
+for the initial embedding and prompt convolution/KV states. Subsequent state
+and the next token's embedding are NPU-produced. Prompt prefill remains
+CPU-created, so this is not yet a self-contained NPU inference runtime.
 
 ## Remaining model computations
 
-The immediate correctness gate is **NPU embedding lookup and prompt prefill**,
-so the runtime can start and continue without CPU-produced model state.
+The immediate correctness gate is **NPU prompt prefill and initial embedding**,
+so the runtime can start without CPU-produced model state.
 The current attention context program compiles separately for each prior
 cache length (currently tested at 21 and 22; the kernel's local score
 storage bounds it to 127 prior positions). Efficient variable-length
 attention and KV storage are required for longer generation. The output
 head adds three compiled programs and triggers Phoenix context-cache
-eviction; fusing final normalization, vocabulary projection, token
-selection, and the winning token's tied embedding row is an important
-efficiency step. The recurrent and attention programs also stream all
+eviction. The fused head reduces that to one program and supplies the next
+embedding, but it serially streams about 134 MB of tied weights each token
+and is slower in isolation than the earlier four-core output head. The
+recurrent and attention programs also stream all
 weights every call and use one compute core each. Four-core sharding,
 kernel fusion, and persistent data should reduce latency and energy.
 
@@ -372,4 +392,6 @@ foreach ($layer in 2,4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experim
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --head
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_two_tokens.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --head --tokens 2
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_fused_vocab.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --fused-head --tokens 2
 ```
