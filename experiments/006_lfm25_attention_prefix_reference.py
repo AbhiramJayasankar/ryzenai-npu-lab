@@ -1,0 +1,85 @@
+"""Build a CPU BF16 reference for the first attention layer's Q/K/V prefix."""
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from safetensors import safe_open
+from transformers import AutoConfig, AutoTokenizer
+from transformers.models.lfm2.modeling_lfm2 import Lfm2RotaryEmbedding, apply_rotary_pos_emb
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MODEL = ROOT / "cache" / "lfm25-230m"
+PROMPT = "Reply with one short sentence about what an NPU does."
+
+
+def rms_norm(x, gamma, eps):
+    y = x.float()
+    y = y * torch.rsqrt(y.pow(2).mean(-1, keepdim=True) + eps)
+    return gamma * y.to(torch.bfloat16)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=ROOT / "cache" / "lfm25-attention2-reference.npz")
+    args = parser.parse_args()
+    config = AutoConfig.from_pretrained(MODEL, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, local_files_only=True)
+    prompt_ids = tokenizer.apply_chat_template(
+        [{"role": "user", "content": PROMPT}],
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+    )["input_ids"]
+    position = prompt_ids.shape[-1]
+    with np.load(ROOT / "cache" / "lfm25-reference-cpu.npz") as reference:
+        hidden = torch.tensor(reference["step1_hidden2"], dtype=torch.bfloat16).reshape(1, 1, 1024)
+    prefix = "model.layers.2."
+    with safe_open(MODEL / "model.safetensors", framework="pt", device="cpu") as checkpoint:
+        get = lambda name: checkpoint.get_tensor(prefix + name)
+        operator_gamma = get("operator_norm.weight")
+        q_weight = get("self_attn.q_proj.weight")
+        k_weight = get("self_attn.k_proj.weight")
+        v_weight = get("self_attn.v_proj.weight")
+        q_gamma = get("self_attn.q_layernorm.weight")
+        k_gamma = get("self_attn.k_layernorm.weight")
+    with torch.inference_mode():
+        normalized = rms_norm(hidden, operator_gamma, config.norm_eps)
+        q_raw = F.linear(normalized, q_weight).reshape(1, 1, 16, 64)
+        k_raw = F.linear(normalized, k_weight).reshape(1, 1, 8, 64)
+        v = F.linear(normalized, v_weight).reshape(1, 1, 8, 64)
+        q_norm = rms_norm(q_raw, q_gamma, config.norm_eps)
+        k_norm = rms_norm(k_raw, k_gamma, config.norm_eps)
+        cos, sin = Lfm2RotaryEmbedding(config)(hidden, torch.tensor([[position]]))
+        q, k = apply_rotary_pos_emb(
+            q_norm.transpose(1, 2), k_norm.transpose(1, 2), cos, sin
+        )
+    tensors = {
+        "hidden": hidden,
+        "operator_gamma": operator_gamma,
+        "q_weight": q_weight,
+        "k_weight": k_weight,
+        "v_weight": v_weight,
+        "q_gamma": q_gamma,
+        "k_gamma": k_gamma,
+        "cos": cos,
+        "sin": sin,
+        "q_raw": q_raw,
+        "k_raw": k_raw,
+        "q_norm": q_norm,
+        "k_norm": k_norm,
+        "q": q,
+        "k": k,
+        "v": v,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(args.output, **{name: value.float().numpy() for name, value in tensors.items()})
+    print(json.dumps({"position": position, "q_shape": list(q.shape), "k_shape": list(k.shape), "v_shape": list(v.shape), "reference": str(args.output)}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

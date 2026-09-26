@@ -188,6 +188,23 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     fixture exactly. Its timing includes the same two recurrent layers;
     neither timing includes embedding, attention, logits, or tokenization.
     This comparison is latency only; no power result is implied.
+12. **First attention-layer decode prefix and context:**
+    [`006_lfm25_attention_prefix_reference.py`](006_lfm25_attention_prefix_reference.py)
+    builds a BF16 CPU fixture for layer 2's operator norm, Q/K/V projections,
+    per-head normalization, and rotary position at decode position 21.
+    [`006_lfm25_npu_attention_prefix.py`](006_lfm25_npu_attention_prefix.py)
+    runs those operations in one one-core NPU program. All **2,048** Q/K/V
+    outputs matched the CPU fixture **exactly**; its warmed median was
+    **4.44 ms**. [`006_lfm25_npu_attention_context.py`](006_lfm25_npu_attention_context.py)
+    takes the NPU-generated Q/K/V and computes cached attention scores,
+    softmax, and value mixing on the NPU. With 21 earlier cached positions
+    supplied by the CPU fixture, the new key and value matched the full-model
+    CPU cache exactly. The resulting 1,024-value context differed from the
+    full-model CPU context by at most **0.000488**; its warmed call took
+    **5.15 ms**. The NPU softmax uses a bounded exponential approximation.
+    These two calls do not yet include the attention output projection,
+    residual, or FFN. The earlier KV cache has not yet been built or
+    updated by the NPU, so this is a partial attention decode check.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -213,9 +230,10 @@ The next efficiency step is to distribute its projections across the four
 Phoenix compute cores while keeping one hardware context and NPU-resident
 state. The first convolution state still comes from a CPU reference fixture;
 prompt prefill must eventually produce it on the NPU.
-Six attention blocks also need Q/K/V projections, per-head norms,
-rotary position encoding, persistent KV cache, score reduction, softmax, value
-mixing, and output projection. The complete path additionally needs embedding
+The first attention block now has NPU Q/K/V and context checks; it still needs
+an output projection, residual, FFN, and NPU-produced persistent KV cache.
+The other five attention blocks need the same path. The complete model
+additionally needs embedding
 lookup, final normalization, tied vocabulary projection, and NPU token
 selection. Prompt prefill must initialize convolution and KV state correctly.
 
@@ -248,6 +266,7 @@ ignored environments:
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_baseline.py --device cpu --tokens 24 --reference cache\lfm25-reference-cpu.npz
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_baseline.py --device cuda --tokens 24
 & .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_cpu_two_recurrent_layers.py --threads 8 --repeats 200
+& .\cache\lfm-env\Scripts\python.exe experiments\006_lfm25_attention_prefix_reference.py
 
 & 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1' -Arch amd64
 . .\cache\iron\mlir-aie\iron_env.ps1
@@ -263,4 +282,6 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_proj_conv.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_single_program_block.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_two_recurrent_layers.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_prefix.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_context.py
 ```

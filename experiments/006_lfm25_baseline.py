@@ -32,6 +32,17 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
     generated = []
     snapshots = {}
     past = None
+    hook = None
+    if capture:
+        def capture_attention_context(_module, inputs):
+            if step in (0, 1, 2):
+                snapshots[f"step{step}_attn2_context"] = (
+                    inputs[0][0, -1].float().cpu().numpy().copy()
+                )
+
+        hook = model.model.layers[2].self_attn.out_proj.register_forward_pre_hook(
+            capture_attention_context
+        )
     with torch.inference_mode():
         for step in range(steps):
             synchronize(device)
@@ -62,6 +73,12 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
                     .numpy()
                     .copy()
                 )
+                snapshots[f"step{step}_attn2_keys"] = (
+                    output.past_key_values.layers[2].keys.float().cpu().numpy().copy()
+                )
+                snapshots[f"step{step}_attn2_values"] = (
+                    output.past_key_values.layers[2].values.float().cpu().numpy().copy()
+                )
                 for layer, hidden in enumerate(output.hidden_states):
                     snapshots[f"step{step}_hidden{layer}"] = (
                         hidden[0, -1].float().cpu().numpy()
@@ -71,6 +88,8 @@ def generate(model, input_ids, steps, capture=False, stop_at_eos=False):
             past = output.past_key_values
             if stop_at_eos and generated[-1] == model.config.eos_token_id:
                 break
+    if hook is not None:
+        hook.remove()
     return times, generated, snapshots
 
 
