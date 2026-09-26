@@ -210,6 +210,31 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     residual, or FFN. The earlier KV cache still comes from CPU prompt
     prefill, and a next-token call consuming the NPU-updated cache is not
     yet implemented, so this remains a partial attention decode check.
+13. **Complete first attention block over one decode token:**
+    [`006_lfm25_npu_attention_block.py`](006_lfm25_npu_attention_block.py)
+    combines the NPU Q/K/V prefix, cached score/softmax/value mixing,
+    NPU-side packing, and a one-program output projection, residual, and
+    gated FFN tail. The KV cache append also runs on the NPU. All model
+    arithmetic in this block runs on NPU; the incoming hidden vector and
+    21-token prior KV cache still come from the CPU reference fixture.
+    The final hidden vector differed from the full-model CPU reference by
+    at most **0.000977**, and the updated KV cache matched **exactly**.
+    With the CPU reference context fed to the NPU tail to isolate its math,
+    the final hidden error was at most **0.000122**. The warmed attention
+    tail took a median **13.57 ms**, and the five-call block chain including
+    cache append took **25.91 ms**. These timings are for a partial model.
+14. **Three consecutive model layers on NPU:**
+    [`006_lfm25_npu_three_layers.py`](006_lfm25_npu_three_layers.py)
+    connects recurrent layers 0 and 1 directly to attention layer 2 without
+    reading intermediate hidden vectors into CPU. Hidden outputs after
+    layers 0 and 1 matched the CPU reference exactly; the final attention
+    output differed by at most **0.000977**, and the updated KV cache was
+    exact. A warmed median was about **210 ms**, much worse than the sum
+    of isolated kernel calls. Per-stage timing showed roughly 19-35 ms for
+    most calls, including NPU packing calls that take around 1 ms alone.
+    This is the known Phoenix context-cache eviction cost with seven
+    distinct compiled programs. It motivates fusing Q/K/V pass-through,
+    attention context, KV append, and tail packing to reduce live contexts.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -222,7 +247,7 @@ weight, so the current kernel schedules 64-output strips within one invocation.
 
 The NPU timings include the Python/XRT call, dispatch, transfer, execution,
 and completion, with compiled binaries and allocated input buffers warmed.
-The two-layer chain is still a partial model, and summing standalone timings
+The three-layer chain is still a partial model, and summing standalone timings
 is not a valid full-model performance estimate. Current tests use CPU-created
 reference fixtures for the initial hidden vector and convolution state; no
 full-NPU decode runtime exists yet.
@@ -235,9 +260,9 @@ The next efficiency step is to distribute its projections across the four
 Phoenix compute cores while keeping one hardware context and NPU-resident
 state. The first convolution state still comes from a CPU reference fixture;
 prompt prefill must eventually produce it on the NPU.
-The first attention block now has NPU Q/K/V, context, and one KV-cache update
-checks; it still needs an output projection, residual, FFN, dynamic cache
-lengths across tokens, and NPU-produced prompt KV state.
+The first attention block now has a full one-token NPU correctness path. It
+still needs dynamic cache lengths across tokens, NPU-produced prompt KV
+state, and fewer compiled programs to avoid context-cache eviction.
 The other five attention blocks need the same path. The complete model
 additionally needs embedding
 lookup, final normalization, tied vocabulary projection, and NPU token
@@ -290,4 +315,6 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_two_recurrent_layers.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_prefix.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_context.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_block.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_three_layers.py
 ```

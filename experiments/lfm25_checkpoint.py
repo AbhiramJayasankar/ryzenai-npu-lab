@@ -78,3 +78,35 @@ def pack_recurrent_weights(tensors):
             tensors["w2"].reshape(-1),
         ]
     ).astype(bfloat16)
+
+
+def attention_tail_data(checkpoint, index):
+    prefix = f"model.layers.{index}."
+    tensors = {
+        "output": checkpoint.load(prefix + "self_attn.out_proj.weight"),
+        "ffn_gamma": checkpoint.load(prefix + "ffn_norm.weight"),
+        "w1": checkpoint.load(prefix + "feed_forward.w1.weight"),
+        "w3": checkpoint.load(prefix + "feed_forward.w3.weight"),
+        "w2": checkpoint.load(prefix + "feed_forward.w2.weight"),
+    }
+    expected = {
+        "output": (1024, 1024),
+        "ffn_gamma": (1024,),
+        "w1": (2560, 1024),
+        "w3": (2560, 1024),
+        "w2": (1024, 2560),
+    }
+    for name, shape in expected.items():
+        if tensors[name].shape != shape:
+            raise ValueError(f"Attention layer {index} {name} shape {tensors[name].shape} != {shape}")
+    return tensors
+
+
+def pack_attention_tail_weights(tensors):
+    return np.concatenate([
+        tensors["output"].reshape(-1),
+        np.pad(tensors["ffn_gamma"], (0, 4096 - 1024)),
+        tensors["w1"].reshape(-1),
+        tensors["w3"].reshape(-1),
+        tensors["w2"].reshape(-1),
+    ]).astype(bfloat16)
