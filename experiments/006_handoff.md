@@ -148,14 +148,21 @@ sampled Windows battery discharge during the same 23-position workload on
 | CPU, 8 threads | 23.78 | 30.00 | 6.22 | 1.194 s | 7.43 |
 | RTX 4060 GPU | 30.13 | 38.73 | 8.60 | 0.911 s | 7.83 |
 | NPU prototype before paired DMA | 24.73 | 27.59 | 2.87 | 13.212 s | 37.85 |
+| NPU with paired DMA, later unplugged session | 14.61 | 16.862 | 2.252 | 10.504 s | 23.65 |
 
-The NPU drew fewer incremental whole-laptop watts in this sample but used
+In the first session, the NPU drew fewer incremental whole-laptop watts but used
 roughly five times more estimated incremental energy per pass because it
 ran much longer. These values are **exploratory whole-laptop estimates**:
 battery readings update coarsely, idle levels drifted, and a first NPU trial
 had to be discarded after GPU cooldown made its idle baseline too high.
-The newer paired-DMA code has **not** had a new battery measurement; do not
-combine its AC timing with the older battery watts to claim new joules.
+The later NPU run used six measured passes after warm-up, 30 idle samples,
+and 70 active samples. It selected the same tokens with the same maximum
+hidden/state errors. Its pass was **20.5% faster** than the earlier battery
+NPU pass. The reported charge capacity stayed at 58,145 mWh across this
+short run, and the idle baseline was about 10 W lower than in the earlier
+session. Thus **23.65 J is only a session-specific idle-adjusted estimate**;
+the apparent energy improvement cannot be attributed confidently to the
+code change. Keep the two battery sessions separate when interpreting power.
 For stronger power evidence, randomize run order, repeat settled idle/load
 trials, hold display state constant, or use an external meter. The power
 script refuses to run on AC and keeps its raw output under ignored `cache/`.
@@ -208,8 +215,8 @@ Key code:
    one compiled program can handle arbitrary generation lengths without the
    fixed-cache variant's excessive padding. Verify real NPU execution and
    every position against a same-token CPU BF16 reference.
-4. Re-measure battery power after a material runtime change, with repeat
-   trials and stable idle conditions. The key metric is joules per generated
+4. Repeat power trials with stable idle conditions and a battery meter that
+   exposes reliable capacity changes. The key metric is joules per generated
    position for the **whole** NPU pipeline, not an isolated kernel's latency.
 
 The immediate user request is to preserve this working result and its

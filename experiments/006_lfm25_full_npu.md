@@ -433,9 +433,9 @@ program regardless of prior length. It passed all 23 positions with the
 same tokens and errors, but a matched pre-batching AC test was **11.419 s**
 versus **11.206 s** for the variable-length default. It is retained as
 `--fixed-cache` for research, not selected as the faster path. The fixed
-layout adds padded KV traffic. The earlier battery measurements below
-predate the weight-transfer change and must not be combined with its newer
-AC time to claim an updated energy result.
+layout adds padded KV traffic. Battery runs before and after weight-transfer
+changes are recorded below; their different idle levels limit direct energy
+comparison.
 
 ## Remaining runtime and efficiency work
 
@@ -495,6 +495,19 @@ attention calls took **7.65 s**, recurrent calls **4.29 s**, prompt embedding
 DMA **1.01 s**, and the three output-head calls **0.19 s**. These are
 Python/XRT wall times and expose attention/context switching as the main
 optimization target.
+
+A later unplugged test of the paired-weight-DMA code used 30 settled idle
+samples and 70 active samples across six measured full NPU passes. It
+selected the same three tokens; maximum hidden and state errors remained
+**0.25** and **0.18359375**. Median pass time was **10.504 s**, **20.5% faster**
+than the earlier **13.212 s** battery run. Idle and active readings were
+**14.61 W** and **16.862 W**, giving an idle-adjusted **2.252 W** and about
+**23.65 J/pass** under this session's conditions. The battery's reported
+remaining capacity stayed at **58,145 mWh** over the short test, and this
+session's idle baseline was about **10 W lower** than the earlier one. These
+power/energy readings are exploratory; the apparent energy improvement
+cannot confidently be assigned to the code change. The speed change is
+directly observed for the same 23-position NPU workload.
 
 For repeats, keep the same prompt, token IDs, display state, and power mode
 and allow enough idle time between devices for temperature and power state
