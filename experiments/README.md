@@ -17,4 +17,6 @@ For the present state and a self-contained continuation guide, start with the [e
 
 [Experiment 008](008_long_context_limits.md) tests NPU-only chunked attention beyond the old 64/96-position limit and explains why a 4K-token chat remains too slow in the current implementation.
 
+[Experiment 009](009_prefill.md) measures a 20-word prompt against batched CPU BF16 prefill, then tests a correct four-core batched NPU projection with weight reuse. It records the remaining whole-model prefill gap and the DMA sharing needed for further tile parallelism.
+
 For each experiment, record the model and source, software and driver versions, input shape, CPU/NPU settings, warm-up and measurement method, operator placement, raw results, and a short conclusion. Commit small result files and notes; keep downloaded models and datasets outside Git.

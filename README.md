@@ -10,6 +10,9 @@ earlier fixed-sequence proof, setup, speed, and power comparison.
 An [experimental chunked context path](experiments/008_long_context_limits.md)
 crosses the earlier 64/96-token ceiling, but measured latency makes long
 NPU-only chats impractical for now.
+The [short-prompt prefill experiment](experiments/009_prefill.md) measures an
+optimized CPU baseline and a four-core batched NPU projection. The projection
+improves with weight reuse, but whole-model NPU prefill has not beaten CPU.
 
 Reproducible experiments on the NPU in an AMD Ryzen 9 8945HS laptop. This repository will contain our own scripts, measurements, and conclusions. AMD's [RyzenAI-SW examples](https://github.com/amd/RyzenAI-SW) are a reference, not part of this repository.
 
