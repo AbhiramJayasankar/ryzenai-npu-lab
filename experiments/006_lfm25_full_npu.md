@@ -95,6 +95,31 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
    The current SiLU kernel's polynomial was verified for the first block's
    measured input range of roughly `[-0.75, 0.75]`; it needs a wider-range
    implementation before reuse across all model layers.
+6. **Reducing NPU context switches:**
+   [`006_lfm25_npu_bf16_gemv.py`](006_lfm25_npu_bf16_gemv.py) verifies a
+   four-core GEMV that rounds its FP32 accumulation to BF16 within the same
+   NPU program: all 3,072 outputs were bit-exact, median **1.72 ms**.
+   [`006_lfm25_npu_conv_gate_packed_state.py`](006_lfm25_npu_conv_gate_packed_state.py)
+   keeps the depthwise weights beside the evolving convolution state in NPU
+   memory. Its two token outputs, states, and retained weights were exact;
+   the second standalone call took **1.32 ms**. Together these changes cut
+   the first-block chain from 17 to 11 program submissions. Full-chain
+   medians varied between **130 and 184 ms**, with numerical results unchanged.
+   The installed XRT runtime reports a nominal six Phoenix hardware-context
+   slots and implements cache eviction when that limited pool fills. A live
+   [`--diagnose-cache`](006_lfm25_npu_recurrent_block.py) run observed five
+   contexts in this process and a replacement on each miss. It explains the
+   sudden ~20 ms stage costs when the chain uses too many distinct program
+   images. A larger context cache cannot remove the systemwide hardware limit.
+7. **Single-program composition proof:**
+   [`006_lfm25_npu_norm_gemv.py`](006_lfm25_npu_norm_gemv.py) streams the real
+   first-block normalization weight and 6 MB projection matrix through one
+   input DMA channel while the original hidden vector uses the other. One
+   Worker performs RMSNorm, FP32-accumulate GEMV, and BF16 rounding in a single
+   Phoenix program. All 3,072 outputs matched the CPU BF16 reference exactly;
+   a warmed one-core call took **4.16 ms**. It establishes a workable pattern
+   for composing a whole block, though this one-core proof is not yet the
+   optimized four-core path.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -114,7 +139,7 @@ exists yet.
 
 ## Remaining model computations
 
-The first recurrent block needs a composed NPU program that avoids expensive
+The first recurrent block needs one composed NPU program that avoids expensive
 switches among the current kernels. Its first convolution state comes from a
 CPU reference fixture; subsequent state remains on the NPU across calls.
 Six attention blocks also need Q/K/V projections, per-head norms,
@@ -160,4 +185,7 @@ ignored environments:
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_gemv.py --cores 4
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_mlp.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_recurrent_block.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_bf16_gemv.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_conv_gate_packed_state.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_norm_gemv.py
 ```

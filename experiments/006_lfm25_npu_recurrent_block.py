@@ -11,7 +11,9 @@ import numpy as np
 from lfm25_cast_kernel import f32_to_bf16
 from lfm25_add_kernel import bf16_add
 from lfm25_conv_gate_kernel import conv_gate
+from lfm25_conv_gate_packed_state_kernel import conv_gate_packed_state
 from lfm25_gemv_kernel import bf16_f32_gemv
+from lfm25_bf16_gemv_kernel import bf16_bf16_gemv
 from lfm25_pack_conv_kernel import pack_conv
 from lfm25_rms_norm_kernel import rms_norm
 from lfm25_silu_gate_kernel import silu_gate
@@ -25,6 +27,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--reference", type=Path, default=ROOT / "cache" / "lfm25-reference-cpu.npz"
+    )
+    parser.add_argument(
+        "--separate-cast", action="store_true",
+        help="Use the original FP32-output GEMV followed by a separate BF16 cast",
+    )
+    parser.add_argument(
+        "--separate-conv-pack", action="store_true",
+        help="Use the original extra NPU call to pack convolution input and weights",
+    )
+    parser.add_argument(
+        "--diagnose-cache", action="store_true",
+        help="Record Phoenix XRT context-cache changes for each NPU call",
     )
     args = parser.parse_args()
     if type(iron.get_current_device()).__name__ != "NPU1":
@@ -77,9 +91,13 @@ def main():
     bf16 = iron.zeros((M,), dtype=bfloat16, device="npu")
     cw = iron.tensor(conv_weight, dtype=bfloat16)
     state0 = iron.tensor(previous_state, dtype=bfloat16)
+    packed_state0 = iron.tensor(
+        np.concatenate([previous_state, conv_weight]), dtype=bfloat16
+    )
     packed = iron.zeros((2 * M,), dtype=bfloat16, device="npu")
     conv_output = iron.zeros((K,), dtype=bfloat16, device="npu")
     state1 = iron.zeros((M,), dtype=bfloat16, device="npu")
+    packed_state1 = iron.zeros((2 * M,), dtype=bfloat16, device="npu")
     ow = iron.tensor(out_weight, dtype=bfloat16)
     out_fp32 = iron.zeros((K,), dtype=np.float32, device="npu")
     out_bf16 = iron.zeros((K,), dtype=bfloat16, device="npu")
@@ -103,76 +121,110 @@ def main():
     block_output = iron.zeros((K,), dtype=bfloat16, device="npu")
     residual_input2 = iron.tensor(block_input2, dtype=bfloat16)
     state2 = iron.zeros((M,), dtype=bfloat16, device="npu")
+    packed_state2 = iron.zeros((2 * M,), dtype=bfloat16, device="npu")
     block_output2 = iron.zeros((K,), dtype=bfloat16, device="npu")
+    initial_state = state0 if args.separate_conv_pack else packed_state0
+    following_state1 = state1 if args.separate_conv_pack else packed_state1
+    following_state2 = state2 if args.separate_conv_pack else packed_state2
+
+    def projection_stages(name, matrix, activation, fp32_output, bf16_output, rows, cols):
+        if args.separate_cast:
+            return (
+                (
+                    f"{name}_gemv",
+                    lambda: bf16_f32_gemv(
+                        matrix, activation, fp32_output, M=rows, K=cols, n_cores=4
+                    ),
+                ),
+                (
+                    f"{name}_cast",
+                    lambda: f32_to_bf16(fp32_output, bf16_output, N=rows),
+                ),
+            )
+        return (
+            (
+                f"{name}_gemv_bf16",
+                lambda: bf16_bf16_gemv(
+                    matrix, activation, bf16_output, M=rows, K=cols, n_cores=4
+                ),
+            ),
+        )
+
+    def convolution_stages(previous, following):
+        if args.separate_conv_pack:
+            return (
+                ("conv_pack", lambda: pack_conv(bf16, cw, packed)),
+                ("conv_gate", lambda: conv_gate(packed, previous, conv_output, following)),
+            )
+        return (
+            (
+                "conv_gate_packed_state",
+                lambda: conv_gate_packed_state(bf16, previous, conv_output, following),
+            ),
+        )
 
     def run(input_hidden, previous_state, following_state, final_output,
-            phase_times=None, stage_count=17):
+            phase_times=None, stage_count=None, cache_trace=None):
         stages = (
             ("operator_norm", lambda: rms_norm(input_hidden, operator_gamma, x, N=K)),
-            ("input_gemv", lambda: bf16_f32_gemv(w, x, fp32, M=M, K=K, n_cores=4)),
-            ("input_cast", lambda: f32_to_bf16(fp32, bf16, N=M)),
-            ("conv_pack", lambda: pack_conv(bf16, cw, packed)),
-            ("conv_gate", lambda: conv_gate(packed, previous_state, conv_output, following_state)),
-            (
-                "output_gemv",
-                lambda: bf16_f32_gemv(ow, conv_output, out_fp32, M=K, K=K, n_cores=4),
-            ),
-            ("output_cast", lambda: f32_to_bf16(out_fp32, out_bf16, N=K)),
+            *projection_stages("input", w, x, fp32, bf16, M, K),
+            *convolution_stages(previous_state, following_state),
+            *projection_stages("output", ow, conv_output, out_fp32, out_bf16, K, K),
             ("residual_add", lambda: bf16_add(out_bf16, input_hidden, residual, N=K)),
             ("ffn_norm", lambda: rms_norm(residual, ffn_gamma, normalized, N=K)),
-            (
-                "w1_gemv",
-                lambda: bf16_f32_gemv(fw["w1"], normalized, ff32["w1"], M=2560, K=K, n_cores=4),
-            ),
-            ("w1_cast", lambda: f32_to_bf16(ff32["w1"], fb16["w1"], N=2560)),
-            (
-                "w3_gemv",
-                lambda: bf16_f32_gemv(fw["w3"], normalized, ff32["w3"], M=2560, K=K, n_cores=4),
-            ),
-            ("w3_cast", lambda: f32_to_bf16(ff32["w3"], fb16["w3"], N=2560)),
+            *projection_stages("w1", fw["w1"], normalized, ff32["w1"], fb16["w1"], 2560, K),
+            *projection_stages("w3", fw["w3"], normalized, ff32["w3"], fb16["w3"], 2560, K),
             ("silu_gate", lambda: silu_gate(fb16["w1"], fb16["w3"], gated, N=2560)),
-            (
-                "w2_gemv",
-                lambda: bf16_f32_gemv(fw["w2"], gated, ff32["w2"], M=K, K=2560, n_cores=4),
-            ),
-            ("w2_cast", lambda: f32_to_bf16(ff32["w2"], fb16["w2"], N=K)),
+            *projection_stages("w2", fw["w2"], gated, ff32["w2"], fb16["w2"], K, 2560),
             ("block_add", lambda: bf16_add(residual, fb16["w2"], final_output, N=K)),
         )
         for name, stage in stages[:stage_count]:
+            if cache_trace is not None:
+                from aie.utils import DefaultNPURuntime
+
+                before = set(DefaultNPURuntime._context_cache)
             start = time.perf_counter()
             stage()
             if phase_times is not None:
                 phase_times[name].append((time.perf_counter() - start) * 1000)
+            if cache_trace is not None:
+                after = set(DefaultNPURuntime._context_cache)
+                cache_trace.append(
+                    {
+                        "stage": name,
+                        "before": len(before),
+                        "after": len(after),
+                        "retained": len(before & after),
+                        "new": len(after - before),
+                    }
+                )
+        return tuple(name for name, _stage in stages)
 
-    run(residual_input, state0, state1, block_output)
+    stage_names = run(residual_input, initial_state, following_state1, block_output, stage_count=0)
+    run(residual_input, initial_state, following_state1, block_output)
     times = []
-    phase_times = {
-        name: []
-        for name in (
-            "operator_norm", "input_gemv", "input_cast", "conv_pack", "conv_gate",
-            "output_gemv", "output_cast", "residual_add",
-            "ffn_norm", "w1_gemv", "w1_cast", "w3_gemv", "w3_cast",
-            "silu_gate", "w2_gemv", "w2_cast", "block_add",
-        )
-    }
+    phase_times = {name: [] for name in stage_names}
     for _ in range(10):
         start = time.perf_counter()
-        run(residual_input, state0, state1, block_output, phase_times=phase_times)
+        run(residual_input, initial_state, following_state1, block_output, phase_times=phase_times)
         times.append((time.perf_counter() - start) * 1000)
     prefix_medians = {}
-    for count in (5, 6, 7, 8):
-        run(residual_input, state0, state1, block_output, stage_count=count)
+    for count in range(4, min(8, len(stage_names)) + 1):
+        run(residual_input, initial_state, following_state1, block_output, stage_count=count)
         prefix_times = []
         for _ in range(5):
             start = time.perf_counter()
-            run(residual_input, state0, state1, block_output, stage_count=count)
+            run(residual_input, initial_state, following_state1, block_output, stage_count=count)
             prefix_times.append((time.perf_counter() - start) * 1000)
         prefix_medians[str(count)] = statistics.median(prefix_times)
+    cache_trace = []
+    if args.diagnose_cache:
+        run(residual_input, initial_state, following_state1, block_output, cache_trace=cache_trace)
     actual = bf16.numpy().astype(np.float32)
     norm_input_actual = x.numpy().astype(np.float32)
     difference = actual - expected
     conv_actual = conv_output.numpy().astype(np.float32)
-    state_actual = state1.numpy().astype(np.float32)
+    state_actual = following_state1.numpy().astype(np.float32)[:M]
     out_actual = out_bf16.numpy().astype(np.float32)
     residual_actual = residual.numpy().astype(np.float32)
     norm_actual = normalized.numpy().astype(np.float32)
@@ -181,6 +233,9 @@ def main():
     result = {
         "operation": "LFM2.5 layer 0 complete recurrent block on Phoenix NPU",
         "device": "Phoenix NPU1",
+        "projection_output_mode": "separate_cast" if args.separate_cast else "fused_bf16",
+        "convolution_mode": "separate_pack" if args.separate_conv_pack else "packed_state",
+        "npu_program_calls": len(stage_names),
         "median_chain_ms": statistics.median(times),
         "operator_norm_exact_fraction": float(np.mean(norm_input_actual == activation)),
         "operator_norm_max_abs_error": float(np.max(np.abs(norm_input_actual - activation))),
@@ -188,6 +243,7 @@ def main():
             name: statistics.median(values) for name, values in phase_times.items()
         },
         "prefix_median_ms": prefix_medians,
+        "cache_trace": cache_trace if args.diagnose_cache else None,
         "exact_fraction": float(np.mean(actual == expected)),
         "max_abs_error": float(np.max(np.abs(difference))),
         "mean_abs_error": float(np.mean(np.abs(difference))),
@@ -214,9 +270,9 @@ def main():
         result[f"{name}_max_abs_error"] = float(
             np.max(np.abs(actual_ffn - expected_ffn[name]))
         )
-    run(residual_input2, state1, state2, block_output2)
+    run(residual_input2, following_state1, following_state2, block_output2)
     second_block_actual = block_output2.numpy().astype(np.float32)
-    second_state_actual = state2.numpy().astype(np.float32)
+    second_state_actual = following_state2.numpy().astype(np.float32)[:M]
     result["second_block_exact_fraction"] = float(
         np.mean(second_block_actual == expected_block2)
     )
