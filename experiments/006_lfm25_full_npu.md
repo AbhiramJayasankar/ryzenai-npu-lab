@@ -290,12 +290,12 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     attention programs plus the output-head programs. This is a correctness
     experiment, not a practical generation throughput result.
 18. **NPU-produced next-token embedding:**
-    [`006_lfm25_npu_fused_vocab.py`](006_lfm25_npu_fused_vocab.py)
+    [`006_lfm25_npu_fused_vocab.py --cores 1`](006_lfm25_npu_fused_vocab.py)
     verifies a one-core IRON program that combines final RMSNorm, tied
     vocabulary scoring, argmax, and retention of the winning embedding row.
     In isolation it selected token **38,785** and returned the exact BF16
     embedding row, with a warmed median of **39.47 ms**. The full
-    [`006_lfm25_npu_layer_stack.py --fused-head --tokens 2`](006_lfm25_npu_layer_stack.py)
+    [`006_lfm25_npu_layer_stack.py --fused-head --fused-head-cores 1 --tokens 2`](006_lfm25_npu_layer_stack.py)
     then fed this NPU-produced embedding into token 2, together with all
     NPU-produced recurrent/KV states. The NPU selected tokens **38,785**
     and **562**; both selected embedding rows exactly matched the CPU
@@ -308,6 +308,22 @@ All runs used the already-installed IRON 1.4.3/XRT toolchain on `NPU1`.
     model arithmetic after the CPU-provided prompt state and initial token
     embedding. This is still a fixed two-step correctness experiment, not
     a self-contained prompt-to-generation runtime or an efficient decoder.
+19. **Four-core fused output head:**
+    [`lfm25_fused_vocab_4core_kernel.py`](lfm25_fused_vocab_4core_kernel.py)
+    splits the tied vocabulary into four 16,384-row shards. Each AIE core
+    scores its shard, retaining its best row; adjacent cores pass one
+    candidate along a short chain so the final core returns the global
+    token ID and embedding. This layout respects the Phoenix tile
+    connection limits. The isolated warmed median was **11.89 ms** versus
+    **39.47 ms** for the one-core version, a **3.3×** speedup. Both selected
+    **38,785** with the exact embedding row. In the two-token full chain,
+    both NPU-selected tokens remained **38,785** and **562**, the next
+    embeddings were exact, and the final hidden error remained **0.0234375**.
+    The warmed chain median was **955 ms** across three repeats, with fused
+    head calls around **42 ms** each. This is a comparison of Python/XRT
+    wall time including context switching, not isolated core execution.
+    Synthetic one-hot probes forced each of the four shards to win in turn;
+    every NPU token ID and returned embedding row matched exactly.
 
 The initial matrix kernel pads one useful activation row to 16 matrix rows,
 wasting compute, and streams weights from system memory for every invocation.
@@ -335,9 +351,9 @@ cache length (currently tested at 21 and 22; the kernel's local score
 storage bounds it to 127 prior positions). Efficient variable-length
 attention and KV storage are required for longer generation. The output
 head adds three compiled programs and triggers Phoenix context-cache
-eviction. The fused head reduces that to one program and supplies the next
-embedding, but it serially streams about 134 MB of tied weights each token
-and is slower in isolation than the earlier four-core output head. The
+eviction. The four-core fused head reduces that to one program and supplies
+the next embedding. It still streams about 134 MB of tied weights each token.
+The
 recurrent and attention programs also stream all
 weights every call and use one compute core each. Four-core sharding,
 kernel fusion, and persistent data should reduce latency and energy.
@@ -393,5 +409,7 @@ foreach ($layer in 2,4,6,8,10,12) { & .\cache\lfm-env\Scripts\python.exe experim
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_attention_two_tokens.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --head --tokens 2
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_fused_vocab.py
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_fused_vocab.py --cores 4
+& .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_fused_vocab.py --cores 4 --probe-shards
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\006_lfm25_npu_layer_stack.py --fused-head --tokens 2
 ```
