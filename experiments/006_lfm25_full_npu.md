@@ -430,12 +430,20 @@ reporting](https://ryzenai.docs.amd.com/en/main/xrt_smi.html). This laptop is
 currently on AC power, so Windows battery discharge is zero. No defensible
 CPU/NPU/GPU power comparison has been measured yet.
 
-For a comparable end-to-end result, run warmed CPU, GPU, and complete NPU
-generation on battery with the same prompt, fixed token count, display/power
-mode, and enough repetitions for the battery discharge sensor to stabilize.
-Record idle-adjusted **whole-laptop watts**, tokens/s, and joules/token;
-optionally record GPU device power through NVIDIA telemetry. Whole-laptop
-discharge is not an isolated NPU power reading.
+[`scripts/measure_battery_run.ps1`](../scripts/measure_battery_run.ps1)
+is ready for a battery-only comparison. It refuses an AC-powered run, samples
+idle discharge before each benchmark, skips model load and warm-up time,
+then records median active and idle-adjusted **whole-laptop watts**. It saves
+each benchmark's raw output in ignored `cache/`. Its AC guard was verified;
+the battery sampling path still needs a physical unplugged run.
+
+Use the same prompt, token IDs, display state, and power mode for CPU, GPU,
+and NPU. Keep each process running long enough for the discharge sensor to
+settle; the CPU/GPU scripts accept many repeats and the NPU sequence accepts
+`--repeats 6`. Whole-laptop discharge is not an isolated NPU power reading.
+NVIDIA telemetry can additionally report GPU device power but has no NPU
+equivalent on this Phoenix device. Derive joules per position from the
+idle-adjusted watts and matching benchmark time only after valid samples.
 
 ## Reproduce the current checks
 
