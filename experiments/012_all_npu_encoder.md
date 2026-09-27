@@ -56,6 +56,17 @@ Repeated runs are bit-identical.
 Not measured: power, and CPU load while the NPU runs (the process's CPU time
 includes ONNX Runtime and XRT waiting threads).
 
+## Live demo
+
+`powershell -NoProfile -File scripts\parakeet_npu_demo.ps1` transcribes the
+microphone live ([`012_live_demo.py`](012_live_demo.py); needs `sounddevice`
+in the IRON venv). An energy VAD ends a phrase after 0.7 s of silence and cuts
+speech longer than 10 s at the quietest point of its last 2 s, so every call
+fits the 1-block program. Startup ~7 s (compiled program cached). Per phrase:
+NPU encoder 175 to 200 ms, whole pipeline 205 to 270 ms. `--ptt` for push to
+talk, `--cpu` to compare with the CPU FP32 encoder, file arguments to run
+WAVs through the same segmenter. Tried by the owner live on the laptop mic.
+
 ## Root cause of the hangs: shim task-queue overflow
 
 Before the fix the NPU hung intermittently (after 2 to 72 good submissions)
@@ -271,6 +282,7 @@ depthwise convolution + Swish, and the final LayerNorm all match with cosine
 | [`012_encoder_test.py`](012_encoder_test.py) | Full encoder vs ONNX Runtime FP32 and transcripts |
 | [`012_transcribe.py`](012_transcribe.py) | WER with the 1-block program (long utterances chunked; CPU FP32 with the same chunks) |
 | [`012_transcribe_long.py`](012_transcribe_long.py) | Long utterances whole with the 2- and 3-block programs; `--combine` builds the whole-utterance table |
+| [`012_live_demo.py`](012_live_demo.py), [`../scripts/parakeet_npu_demo.ps1`](../scripts/parakeet_npu_demo.ps1) | Live microphone transcription on the NPU |
 | [`012_results.json`](012_results.json) | Summaries of the evaluation and the correctness test |
 | [`012_schedule_check.py`](012_schedule_check.py), [`012_cache_audit.py`](012_cache_audit.py) | Offline schedule regressions and audit of cached MLIR (queue limits) |
 | [`012_vbench.py`](012_vbench.py) | Single-core timing and accuracy of the vector math |
