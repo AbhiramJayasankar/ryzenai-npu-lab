@@ -7,6 +7,7 @@ the same token prefix; otherwise the runner rebuilds it from token IDs.
 """
 
 import argparse
+import importlib
 import json
 import time
 from pathlib import Path
@@ -31,7 +32,6 @@ from lfm25_checkpoint import (
     BF16Checkpoint, attention_tail_data, pack_attention_tail_weights,
     pack_recurrent_weights, recurrent_layer_data,
 )
-from lfm25_embedding_dynamic_kernel import embedding_dma_dynamic
 from lfm25_fused_vocab_4core_kernel import fused_vocab_4core
 from lfm25_pack_block_input_kernel import pack_block_input
 from lfm25_single_program_block_kernel import recurrent_block
@@ -83,12 +83,13 @@ def render_chat(messages):
 
 
 class NPUChat:
-    def __init__(self, cache_mode="fixed64"):
+    def __init__(self, cache_mode="fixed64", paired_prefill=False):
         if type(iron.get_current_device()).__name__ != "NPU1":
             raise RuntimeError("This runner requires the Phoenix NPU1")
         if not (MODEL / "model.safetensors").is_file():
             raise FileNotFoundError(f"Model checkpoint missing under {MODEL}")
         self.cache_mode = cache_mode
+        self.paired_prefill = paired_prefill
         self.max_positions = {
             "fixed64": 64,
             "variable": MAX_POSITIONS,
@@ -139,9 +140,10 @@ class NPUChat:
         if token_id is not None:
             if not 0 <= token_id < VOCAB:
                 raise ValueError("Token ID outside vocabulary")
-            token = iron.tensor(np.array([token_id], dtype=np.int32), dtype=np.int32)
-            hidden = iron.zeros((1024,), dtype=bfloat16, device="npu")
-            embedding_dma_dynamic(self.table, hidden, token)
+            # XRT subviews select a row of the shared NPU buffer by address.
+            # The host computes the byte offset only; embedding values stay
+            # in NPU-accessible memory and are never read by the CPU.
+            hidden = self.table.subview(token_id * 1024 * 2, (1024,))
         else:
             hidden = embedding
 
@@ -219,12 +221,22 @@ class NPUChat:
             self.reset()
         start_index = len(self.consumed_ids)
         start = time.perf_counter()
-        prediction = None
-        for index in range(start_index, len(prompt_ids)):
-            token = prompt_ids[index]
-            prediction = self.step(token_id=token,
-                                   select_next=index == len(prompt_ids) - 1)
-            self.consumed_ids.append(token)
+        use_paired_prefill = (
+            self.paired_prefill and not reused_state and self.cache_mode == "fixed64"
+            and len(prompt_ids) % 2 == 0
+        )
+        if use_paired_prefill:
+            summary, next_embedding = importlib.import_module(
+                "009_prefill_pair_runner"
+            ).prefill(self, prompt_ids, rotary)
+            prediction = (summary["first_token_id"], next_embedding)
+        else:
+            prediction = None
+            for index in range(start_index, len(prompt_ids)):
+                token = prompt_ids[index]
+                prediction = self.step(token_id=token,
+                                       select_next=index == len(prompt_ids) - 1)
+                self.consumed_ids.append(token)
         generated = []
         for _ in range(max_new_tokens):
             selected, next_embedding = prediction
@@ -244,6 +256,7 @@ class NPUChat:
             "elapsed_seconds": time.perf_counter() - start,
             "stopped_on_eos": prediction[0] == EOS_ID,
             "device": "Phoenix NPU1",
+            "prefill_mode": "paired" if use_paired_prefill else "token-wise",
         }
 
 
@@ -254,6 +267,8 @@ def main():
     parser.add_argument("--cache-mode", choices=("variable", "fixed64", "chunked"),
                         default="fixed64")
     parser.add_argument("--json", action="store_true", help="Print one JSON result")
+    parser.add_argument("--paired-prefill", action="store_true",
+                        help="Use faster paired layer-wise prefill for even fixed64 prompts")
     args = parser.parse_args()
     max_positions = {"fixed64": 64, "variable": MAX_POSITIONS,
                      "chunked": CHUNKED_CONTEXT_POSITIONS}[args.cache_mode]
@@ -261,7 +276,7 @@ def main():
         parser.error(f"--max-new-tokens must be between 1 and {max_positions}")
     if args.json and args.prompt is None:
         parser.error("--json requires --prompt")
-    chat = NPUChat(args.cache_mode)
+    chat = NPUChat(args.cache_mode, paired_prefill=args.paired_prefill)
     if args.prompt is not None:
         result = chat.respond([{"role": "user", "content": args.prompt}],
                               args.max_new_tokens)

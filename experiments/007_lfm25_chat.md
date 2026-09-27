@@ -22,6 +22,9 @@ From the repository root:
 
 # One prompt with machine-readable output:
 & .\scripts\chat_lfm25_npu.ps1 -Prompt 'Hello!' -MaxNewTokens 8 -Json
+
+# Paired layer-wise prefill on an even-length fixed64 prompt:
+& .\scripts\chat_lfm25_npu.ps1 -Message 'Explain what an NPU is, how it differs from a GPU, and when it is useful for local machine learning.' -MaxNewTokens 2 -PairedPrefill -Json
 ```
 
 Default `fixed64` mode uses one reusable attention-cache program and can
@@ -45,13 +48,17 @@ sharply with context, so it is not the default. See
 [experiment 008](008_long_context_limits.md) for correctness and speed data.
 
 This runner does **not** require CPU model reference files at inference time.
-The CPU handles tokenizer work, rotary constant preparation, and NPU program
-submission. A runtime token-ID tensor enters a custom NPU embedding program,
-which selects the BF16 embedding row; no CPU/NPU layer split is used. On this
-Phoenix static instruction path, a dynamic DMA row offset did not compile,
-so the current embedding program streams the full table past an NPU core for
-each prompt token. Warmed isolated calls took about **25 ms each** across four
-different token IDs. This is correct but leaves substantial speed headroom.
+The CPU handles tokenizer work, rotary constant preparation, NPU program
+submission, and the address calculation for an embedding row. An XRT
+sub-buffer view points DMA directly at that BF16 row; the CPU does not read
+embedding values and performs no model arithmetic. The original dynamic
+embedding program scanned the 128 MiB table for each prompt token, costing
+about **25 ms per lookup**. The sub-buffer view removes that scan. The
+optional paired prefill path reuses weights for two adjacent prompt tokens
+inside each layer; it applies only to a fresh, even-length `fixed64` prompt.
+Other prompts use the token-wise path. On the 34-token experiment 009 prompt,
+paired prefill took **8.1 s** versus **9.65 s** with token-wise row views.
+The [eight-core engine](010_x8_engine.md) supersedes both for speed.
 
 ## Hardware checks
 
@@ -87,11 +94,9 @@ laptop; that compilation is a one-time local cache cost.
 - The fixed cache transfers padded entries even early in the prompt; it is
   not a general long-context solution. Retained transcript tokens are
   replayed when the token prefix changes or the context window is trimmed.
-- The next speed steps are multi-core recurrent/attention projection
-  programs, less weight streaming and program switching, and a dynamic
-  embedding selection that avoids scanning the entire tied table. Longer
-  context needs chunked KV storage and attention rather than a larger
-  single-tile fixed cache.
+- The subsequent eight-core engine reduces weight streaming and program
+  switching and adds longer-context KV tiers. This runner remains a useful
+  reference for the earlier stage-wise architecture.
 
 The working Ryzen AI installation, IRON/XRT toolchain and NPU driver were
 kept in place. The chat runner and new kernels use the separate ignored IRON

@@ -1,12 +1,19 @@
 # Ryzen AI NPU Lab
 
-**Current result:** A short-context [interactive LFM2.5-230M chat runner](experiments/007_lfm25_chat.md)
-accepts new text prompts and performs every model calculation on the Phoenix
-NPU. It matches CPU BF16 token selections on two tested prompts and reuses
-NPU state across turns when the token prefix is unchanged. On the configured
-laptop, launch it with `& .\scripts\chat_lfm25_npu.ps1` from this repository's
-root. The [experiment 006 handoff](experiments/006_handoff.md) records the
-earlier fixed-sequence proof, setup, speed, and power comparison.
+**Current result:** The [eight-core LFM2.5-230M engine](experiments/010_x8_engine.md)
+runs every model calculation on the Phoenix NPU in BF16 at **17.2 ms per
+generated token (58 tokens/s)**, faster than the same token-by-token schedule
+on 8 CPU threads (~30 ms) and ~26× faster than this lab's earlier NPU path.
+Prompts run four tokens per weight pass at 4.6 ms per token; a 161-token
+prompt reaches its first reply token in 0.82 s. Decode is at the NPU's
+measured ~27 GB/s DDR read ceiling. Outputs match the CPU BF16 reference
+token for token except at exact BF16 ties. Chat with
+`& .\scripts\iron_python.ps1 experiments\010_lfm25_npu_chat.py` from this
+repository's root (4096-position context).
+
+The earlier [short-context chat runner](experiments/007_lfm25_chat.md) and
+the [experiment 006 handoff](experiments/006_handoff.md) record the first
+all-NPU proof, setup, speed, and power comparison.
 An [experimental chunked context path](experiments/008_long_context_limits.md)
 crosses the earlier 64/96-token ceiling, but measured latency makes long
 NPU-only chats impractical for now.

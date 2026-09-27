@@ -1,12 +1,29 @@
 # Experiment 009: can a short LFM2.5 prompt prefill beat the CPU on Phoenix NPU?
 
-## Result so far
+## Results
 
 **No.** The correct all-NPU chat implementation selected the same first token as
 the CPU, but its warm 34-token prefill took **13,695 ms**, compared with **42.3 ms**
 for the fastest measured whole-prompt BF16 CPU run. This is a **324× latency
-gap** for the current implementation. The input text is exactly 20 words, but
+gap for the initial implementation. The input text is exactly 20 words, but
 the chat template and tokenizer produce 34 model tokens.
+
+Subsequent work removed the per-token embedding scan using XRT sub-buffer
+views and fused adjacent prompt positions within each layer. The optimized
+token-wise path took **9,647 ms** median; the paired layer-wise path took
+**8,096 ms** median, selected first token ID `2797`, and continued with ID
+`38785`, matching the CPU for both tokens. The paired path retained all
+recurrent and attention state on NPU1. Its 17 pairs still streamed each
+layer's weights 17 times and used separate NPU submissions for recurrent,
+attention-prefix, attention-context, and attention-tail programs.
+
+The later [eight-core engine](010_x8_engine.md) reworks the complete execution
+schedule and is the practical result: on the same 34-token prompt its time to
+first token was **0.18 s** and the response began `An NP` after two selected
+tokens. That is still about **4.3× slower** than the 42.3 ms batched CPU
+prefill on this particular short prompt; it is vastly faster than this
+experiment's paired prototype. The eight-core engine reuses each weight pass
+for four prompt positions and submits the whole model in one program.
 
 I built a batched four-core NPU projection that processes all 34 useful
 positions together. Reusing each BF16 weight tile across three 16-row prompt
@@ -19,7 +36,10 @@ a faster full-model prefill.
 | Operation | Device and implementation | Warm median |
 | --- | --- | ---: |
 | Full 34-token prefill and first token | BF16 PyTorch CPU, 8 threads | 42.3 ms |
-| Full 34-token prefill and first token | Current all-NPU IRON chat | 13,695 ms |
+| Full 34-token prefill and first token | Initial all-NPU IRON chat | 13,695 ms |
+| Same, direct embedding row views | Token-wise NPU chat | 9,647 ms |
+| Same, two positions per layer | Paired layer-wise NPU chat | 8,096 ms |
+| Same, four-position weight reuse | Eight-core NPU engine | 180 ms |
 | First layer input projection, 34 useful positions | BF16-rounded input, FP32 CPU, 8 threads | 0.683 ms |
 | Same projection, 48 rows padded, four NPU tiles | BF16/FP32, weight repeated for each 16-row tile | 4.15 ms |
 | Same projection, 48 rows padded, four NPU tiles | BF16/FP32, weight reused across all three tiles | 2.95 ms |
@@ -40,8 +60,8 @@ explicitly excludes Phoenix/Hawk Point from both NPU-only and hybrid LLM
 execution. This experiment therefore uses custom IRON/XRT programs without
 changing the working driver or Ryzen AI installation.
 
-The current NPU chat processes the prompt one token at a time. At each model
-position it scans the 128 MiB embedding table, sends every recurrent or
+The initial NPU chat processed the prompt one token at a time. At each model
+position it scanned the 128 MiB embedding table, sent every recurrent or
 attention block its weights again, and starts many separate NPU programs. A
 whole-prompt CPU call instead batches matrix work across positions and can
 reuse a streamed weight block for the batch. The current NPU path therefore
@@ -81,6 +101,13 @@ ignored `cache/`; no driver, firmware, or Ryzen AI installation was changed.
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\009_prefill_npu_baseline.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\009_prefill_projection_probe.py
 & .\cache\iron\mlir-aie\ironenv\Scripts\python.exe experiments\009_prefill_projection_probe.py --reuse-weights
+& .\scripts\iron_python.ps1 experiments\009_prefill_view_embedding.py
+& .\scripts\iron_python.ps1 experiments\009_prefill_pair_recurrent.py --direct
+& .\scripts\iron_python.ps1 experiments\009_prefill_pair_attention_prefix.py
+& .\scripts\iron_python.ps1 experiments\009_prefill_pair_attention_context.py
+& .\scripts\iron_python.ps1 experiments\009_prefill_pair_attention_tail.py
+& .\scripts\iron_python.ps1 experiments\009_prefill_pair_runner.py
+& .\scripts\chat_lfm25_npu.ps1 -Message 'Explain what an NPU is, how it differs from a GPU, and when it is useful for local machine learning.' -MaxNewTokens 2 -PairedPrefill -Json
 ```
 
 CPU whole-prompt result: 1/2/4/8/16 thread medians were
@@ -90,12 +117,13 @@ samples were 4.153/4.223/4.044/3.874/4.564 ms without reuse and
 3.153/2.909/2.952/2.941/2.955 ms with reuse. The machine was on AC at the
 end of these measurements; power draw was not measured.
 
-## Next experiment
+## Design continuation
 
-Build one complete **layer-wise batched** NPU block for a 34-token prompt:
+The paired prototype built a partial **layer-wise batched** NPU block for a 34-token prompt:
 RMSNorm, all projections, recurrent convolution or causal attention, FFN, and
 residual with the state retained on NPU. Share the weight stream across prompt
 rows and across cores. Measure its total submission, transfer, and compute
 latency against the equivalent CPU block. If that block cannot approach the
-per-layer budget implied by 42 ms for fourteen layers, the full-model target
-will require a different execution architecture or quantization strategy.
+per-layer budget implied by 42 ms for fourteen layers. The eight-core engine
+in experiment 010 is the resulting redesign; its measured short-prompt
+latency still does not beat the batched CPU.

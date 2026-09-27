@@ -2,6 +2,7 @@ param(
     [Alias('Prompt')][string]$Message,
     [int]$MaxNewTokens = 16,
     [ValidateSet('fixed64', 'variable', 'chunked')][string]$CacheMode = 'fixed64',
+    [switch]$PairedPrefill,
     [switch]$Json
 )
 
@@ -31,6 +32,9 @@ try {
     }
     if ($Json) {
         $arguments += '--json'
+    }
+    if ($PairedPrefill) {
+        $arguments += '--paired-prefill'
     }
     & $python @arguments
     if ($LASTEXITCODE -ne 0) { throw "NPU chat exited with code $LASTEXITCODE." }
