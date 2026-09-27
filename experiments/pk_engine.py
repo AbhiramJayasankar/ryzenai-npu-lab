@@ -51,9 +51,10 @@ EPI_SWISH, EPI_BIAS = 1, 2
 LN_SINGLE, LN_DOUBLE, LN_FINAL = 0, 1, 2
 CTL_LEN = 32
 PAR_LEN = 4096
-# Attention passes per task group: 3 or more (13+ buffer descriptors on the
-# column's shim tile) hung the NPU at 256 frames; 1 and 2 work.
-ATT_GROUP = int(__import__("os").environ.get("PK_ATT_GROUP", "2"))
+# Each attention pass needs three W queue pushes. NPU1 has four queue
+# entries per channel, independently of the shim's 16 buffer descriptors.
+# Larger experimental values are rejected by check(), before device access.
+ATT_GROUP = int(__import__("os").environ.get("PK_ATT_GROUP", "1"))
 
 # io record fields
 S = 8192
@@ -254,18 +255,21 @@ class Att(Phase):
         return header(OP_ATT, 2, 2 * P, 0, nq + nbd + nkv, 2, pph=P, nq=nq, nbd=nbd, bdl=lay.L)
 
     def groups(self, lay, c):
-        """Task groups of at most 3 passes (DMA descriptor budget), each with
-        the drain of its passes' outputs (2 objects of 8 rows per pass)."""
+        """A waited header/prologue group, then one pass per output group.
+
+        Separating the prologue keeps both groups within the four-entry W
+        task queue. Merely moving drains first does not prevent lost pushes.
+        """
+        if ATT_GROUP < 1:
+            raise ValueError("PK_ATT_GROUP must be positive")
         P, T, R = lay.TPAD // 4 // 16, lay.TPAD, lay.R
-        out = []
-        for hi, h in enumerate((c, c + 4)):
+        out = [([("ctrl", self.hdr_off + c * WOBJ, [WOBJ], [1]),
+                 ("io", lay.AUX, [WOBJ], [1]),
+                 ("weights", self.delta_off + c * WOBJ, [WOBJ], [1])], [], [])]
+        for h in (c, c + 4):
             for p0 in range(0, P, ATT_GROUP):
                 ps = range(p0, min(P, p0 + ATT_GROUP))
                 w = []
-                if hi == 0 and p0 == 0:
-                    w += [("ctrl", self.hdr_off + c * WOBJ, [WOBJ], [1]),
-                          ("io", lay.AUX, [WOBJ], [1]),
-                          ("weights", self.delta_off + c * WOBJ, [WOBJ], [1])]
                 for p in ps:
                     w.append(("io", lay.rec(FBIG + h * DK, p * 16), [4, 16, DK], [T // 4 * S, S, 1]))
                     w.append(("io", lay.bd(h) + T - 2 + p * 16 * (R - 1),
@@ -293,9 +297,57 @@ class Conv(Phase):
         return [(w, [], d)]
 
 
-# Shim-tile buffer descriptors per task group (W, X and drain tasks of one
-# column's shim tile). 13 hung the NPU (attention at 256 frames); 10 ran.
+# Retain the existing conservative BD budget (hardware has 16). It is NOT
+# the task-queue capacity: W and X use distinct MM2S channels, C uses S2MM.
 MAX_BDS = 10
+SHIM_TASK_QUEUE_DEPTH = 4  # aie-rt xaie2ipugbl_reginit.c: StartQSizeMax
+
+
+def group_tasks(columns):
+    """The actual issue order, shared by the emitter and static checker.
+
+    Yield (stream, shim column, transfer, wait). Arm every column's drains
+    before any input, since X broadcasts across columns. A prologue-only
+    group waits on its last W task per channel; same-channel FIFO ordering
+    then guarantees all earlier prologue tasks have completed too.
+    """
+    prologue = not any(d for _, _, d in columns)
+    for c, (_, _, drains) in enumerate(columns):
+        for task in drains:
+            yield "C", c, task, True
+    for c, (wf, xf, _) in enumerate(columns):
+        for i, task in enumerate(wf):
+            yield "W", c, task, prologue and i == len(wf) - 1
+        for task in xf:
+            yield "X", c, task, False
+
+
+def check_task_order(tasks):
+    """Conservative queue bounds, with no credit for asynchronous progress.
+
+    One transfer is one push even when its BD has repeat_count > 0. Calls
+    are separated by a verified group completion; four total starts is safe
+    without relying on an extra active-task slot outside the hardware queue.
+    """
+    problems, pending = [], {}
+    last_drain = max((i for i, (kind, _, _, _) in enumerate(tasks) if kind == "C"),
+                     default=-1)
+    for i, (kind, c, _, wait) in enumerate(tasks):
+        key = c, kind
+        pending[key] = pending.get(key, 0) + 1
+        if pending[key] > SHIM_TASK_QUEUE_DEPTH:
+            problems.append(f"col {c} {kind}: {pending[key]} unretired task starts > "
+                            f"NPU1 queue depth {SHIM_TASK_QUEUE_DEPTH}")
+        if kind != "C" and i < last_drain:
+            problems.append(f"col {c} {kind}: fill issued before all columns' drains")
+        if kind == "C" and not wait:
+            problems.append(f"col {c}: drain must be awaited before group completion")
+    if last_drain < 0:
+        for c, kind in pending:
+            channel = [t for t in tasks if t[:2] == (kind, c)]
+            if not channel[-1][3]:
+                problems.append(f"col {c} {kind}: input-only group needs a final-task wait")
+    return problems
 
 
 def _extent(off, sizes, strides):
@@ -314,17 +366,28 @@ def check(phases, lay, lens):
     """Static check before anything reaches the NPU: per core, the objects the
     core program consumes and produces (decoded from each phase header) must
     equal what the runtime sequence delivers and drains; every task group must
-    stay within MAX_BDS descriptors per shim tile; every access pattern must
-    stay inside its buffer. Returns a list of problems (empty = consistent)."""
+    stay within MAX_BDS descriptors per shim tile and four starts per channel;
+    drains precede fills; group boundaries must match complete core iterations
+    (or a waited header/prologue). Every access stays inside its buffer.
+    Returns problems; this is a scheduling check, not a hardware safety proof.
+    """
     xobj, cj = lay.TR * KT, ROWS * 1024
     problems = []
     for pi, ph in enumerate(phases):
         h = ph.header(lay).view(np.int32)
         npro, nb, nwx, nw, nout = (int(v) for v in h[1:6])
         need = {"W": 1 + npro + nb * (nwx + nw), "X": nb * nwx, "C": nb * nout}
+        per_col = [ph.groups(lay, c) for c in range(COLS)]
+        if len({len(gs) for gs in per_col}) != 1 or not per_col[0]:
+            problems.append(f"phase {pi}: columns need equal, nonzero group counts")
+            continue
+        for gi in range(len(per_col[0])):
+            tasks = list(group_tasks([gs[gi] for gs in per_col]))
+            problems.extend(f"phase {pi} ({type(ph).__name__}) group {gi}: {p}"
+                            for p in check_task_order(tasks))
         for c in range(COLS):
             have = {"W": 0, "X": 0, "C": 0}
-            for gi, (wf, xf, d) in enumerate(ph.groups(lay, c)):
+            for gi, (wf, xf, d) in enumerate(per_col[c]):
                 if len(wf) + len(xf) + len(d) > MAX_BDS:
                     problems.append(f"phase {pi} ({type(ph).__name__}) col {c} group {gi}: "
                                     f"{len(wf) + len(xf) + len(d)} descriptors > {MAX_BDS}")
@@ -339,6 +402,22 @@ def check(phases, lay, lens):
                         if lo < 0 or hi >= lens[name]:
                             problems.append(f"phase {pi} col {c}: {kind} access [{lo}, {hi}] "
                                             f"outside {name} ({lens[name]})")
+                # Totals alone miss waits for outputs whose required inputs
+                # will only be issued in a later group, and premature BD reuse.
+                where = f"phase {pi} ({type(ph).__name__}) col {c} group {gi}"
+                if not d:
+                    if gi != 0 or have != {"W": 1 + npro, "X": 0, "C": 0}:
+                        problems.append(f"{where}: input-only group must be exactly the "
+                                        "header/prologue, before any core output")
+                elif nout <= 0 or have["C"] % nout:
+                    problems.append(f"{where}: drain must end on a complete core iteration")
+                else:
+                    done = have["C"] // nout
+                    boundary = {"W": 1 + npro + done * (nwx + nw),
+                                "X": done * nwx, "C": done * nout}
+                    if have != boundary:
+                        problems.append(f"{where}: group completion has {have}, "
+                                        f"needs {boundary} for {done} core iterations")
             for kind in need:
                 if have[kind] != need[kind]:
                     problems.append(f"phase {pi} ({type(ph).__name__}) col {c}: {kind} objects "
@@ -405,16 +484,11 @@ def design(nblk, phases, lens, tag):
                 per_col = [ph.groups(lay, c) for c in range(COLS)]
                 for gi in range(len(per_col[0])):
                     g = TaskGroup()
-                    for c in range(COLS):
-                        wf, xf, _ = per_col[c][gi]
-                        for name, off, sz, st in wf:
-                            wp[c].fill(bufs[name], tap=tap(lens[name], off, sz, st), group=g)
-                        for name, off, sz, st in xf:
-                            xp[c].fill(bufs[name], tap=tap(lens[name], off, sz, st), group=g)
-                    for c in range(COLS):
-                        for name, off, sz, st in per_col[c][gi][2]:
-                            cc[c].drain(bufs[name], tap=tap(lens[name], off, sz, st), group=g,
-                                        wait=True)
+                    for kind, c, (name, off, sz, st), wait in group_tasks(
+                            [gs[gi] for gs in per_col]):
+                        handle = {"W": wp, "X": xp, "C": cc}[kind][c]
+                        transfer = handle.drain if kind == "C" else handle.fill
+                        transfer(bufs[name], tap=tap(lens[name], off, sz, st), group=g, wait=wait)
                     g.finish()
 
         rt = Runtime(sequence, [
