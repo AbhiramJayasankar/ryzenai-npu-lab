@@ -31,11 +31,12 @@ APP = "NPU Dictate"
 APPDIR = Path(os.environ.get("APPDATA", Path.home())) / APP
 LAUNCHER = Path(__file__).resolve().parent / "NPU Dictate.ps1"
 DEFAULTS = {"shortcut": "ctrl+shift+space", "mode": "toggle", "microphone": "", "output": "paste",
-            "trailing_space": True, "sounds": True, "overlay": True, "start_minimized": False}
+            "trailing_space": True, "sounds": True, "overlay": True, "start_minimized": False,
+            "unload_after_s": 0}
 MODES = {"toggle": "Press to start, press again to insert", "hold": "Hold to talk, release to insert"}
 OUTPUTS = {"paste": "Paste (your clipboard is restored)", "type": "Type it as keystrokes",
            "clipboard": "Only copy to the clipboard"}
-COLORS = {"loading": "#8e8e93", "ready": "#30a14e", "recording": "#e5484d", "busy": "#d9a400",
+COLORS = {"loading": "#8e8e93", "unloaded": "#8e8e93", "ready": "#30a14e", "recording": "#e5484d", "busy": "#d9a400",
           "error": "#e5484d"}
 WATCHDOG_S = 30.0
 S = 1.0  # display scale (DPI / 96), set when the window is created
@@ -120,7 +121,8 @@ def make_shortcut(path, icon):
 
 # -- engine process proxy --------------------------------------------------------
 class Engine:
-    def __init__(self, post):
+    def __init__(self, post, gen):
+        self.gen, self.closing = gen, False
         ctx = mp.get_context("spawn")
         self.inq, self.outq = ctx.Queue(), ctx.Queue()
         self.proc = ctx.Process(target=engine.serve, args=(self.inq, self.outq, str(APPDIR / "engine.log")),
@@ -131,16 +133,20 @@ class Engine:
     def _read(self, post):
         while True:
             try:
-                post(("engine", self.outq.get(timeout=1.0)))
+                post(("engine", self.gen, self.outq.get(timeout=1.0)))
             except queue.Empty:
                 if not self.proc.is_alive():
-                    post(("engine", ("fatal", f"The engine process exited (code {self.proc.exitcode}).")))
+                    if not self.closing:
+                        post(("engine", self.gen,
+                              ("fatal", f"The engine process exited (code {self.proc.exitcode}).")))
                     return
 
     def send(self, session, index, audio):
         self.inq.put(("audio", session, index, audio))
 
     def close(self):
+        """Ends the engine process; this frees its ~1.4 GB (weights and NPU context)."""
+        self.closing = True
         if self.proc.is_alive():
             self.inq.put(("quit",))
             self.proc.join(10)
@@ -338,6 +344,8 @@ class App:
         self.ui_q = queue.Queue()
         self.post = self.ui_q.put
         self.engine_state, self.engine_msg = "loading", "Starting the NPU engine…"
+        self.engine, self.engine_gen = None, 0
+        self.last_active = time.perf_counter()
         self.recording = False
         self.session = 0
         self.sessions = {}
@@ -358,7 +366,7 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self._build_ui()
 
-        self.engine = Engine(self.post)
+        self._load_engine()
         self.recorder = Recorder(self)
         self.overlay = Overlay(self)
         self.out_q = queue.Queue()
@@ -428,6 +436,18 @@ class App:
         for k, v in OUTPUTS.items():
             ttk.Radiobutton(of, text=v, value=k, variable=self.out_var, command=self._changed).pack(anchor="w")
         r += 1
+        ttk.Label(box, text="Free memory").grid(row=r, column=0, sticky="w", pady=px(4))
+        uf = ttk.Frame(box)
+        uf.grid(row=r, column=1, sticky="w", padx=(px(12), px(0)), pady=px(4))
+        ttk.Label(uf, text="Unload the model after").pack(side="left")
+        self.unload_var = tk.StringVar(value=str(self.settings["unload_after_s"]))
+        sp = ttk.Spinbox(uf, from_=0, to=86400, increment=30, width=7, textvariable=self.unload_var,
+                         command=self._unload_changed)
+        sp.pack(side="left", padx=px(6))
+        sp.bind("<FocusOut>", self._unload_changed)
+        sp.bind("<Return>", self._unload_changed)
+        ttk.Label(uf, text="s idle (0 = keep it loaded)", style="Muted.TLabel").pack(side="left")
+        r += 1
         cf = ttk.Frame(box)
         cf.grid(row=r, column=0, columnspan=2, sticky="w", pady=(px(8), px(0)))
         self.checks = {}
@@ -467,6 +487,33 @@ class App:
         self.footer = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=px(520), justify="left")
         self.footer.pack(fill="x", pady=(px(8), px(0)))
 
+    def _load_engine(self):
+        self.engine_gen += 1
+        self.engine_state, self.engine_msg = "loading", "Loading the model onto the NPU…"
+        self.engine = Engine(self.post, self.engine_gen)
+        self._refresh()
+
+    def _unload_engine(self):
+        eng, self.engine = self.engine, None
+        self.engine_gen += 1  # ignore anything the old process still sends
+        self.engine_state = "unloaded"
+        threading.Thread(target=eng.close, daemon=True, name="engine-close").start()
+        self.footer.configure(text=f"Model unloaded after {self.settings['unload_after_s']} s idle (memory freed); "
+                                   "it reloads when you press the shortcut.")
+        self._refresh()
+
+    def _unload_changed(self, event=None):
+        try:
+            v = max(0, min(86400, int(float(self.unload_var.get()))))
+        except ValueError:
+            v = self.settings["unload_after_s"]
+        self.unload_var.set(str(v))
+        if v != self.settings["unload_after_s"]:
+            self.settings["unload_after_s"] = v
+            self.last_active = time.perf_counter()
+            save_settings(self.settings)
+            self._refresh()
+
     def _fill_mics(self):
         try:
             names = input_devices()
@@ -490,14 +537,19 @@ class App:
         key = win32.label(s["shortcut"])
         self.shortcut_lbl.configure(text=key if not self.capturing else "Press the new shortcut… (Esc cancels)")
         state = "recording" if self.recording else self.engine_state
-        text = {"loading": "Loading", "ready": "Ready", "recording": "Recording", "error": "Error"}[state]
+        text = {"loading": "Loading", "ready": "Ready", "recording": "Recording", "error": "Error",
+                "unloaded": "Unloaded"}[state]
         self.status_lbl.configure(text=text)
         self.status_dot.delete("all")
         self.status_dot.create_oval(1, 1, px(11), px(11), fill=COLORS[state], outline="")
         if self.engine_state == "loading":
-            hint = self.engine_msg + " (about 10 s; the first start ever compiles the NPU program for ~2 min)"
+            hint = (self.engine_msg + " (a few seconds; the first start ever compiles the NPU program for ~2 min). "
+                    "You can already dictate: speech is transcribed once the model is ready.")
         elif self.engine_state == "error":
             hint = self.engine_msg
+        elif self.engine_state == "unloaded":
+            hint = (f"The model is unloaded to free memory. Press {key} and just start speaking: it reloads in a "
+                    "few seconds and your speech is transcribed once it is ready.")
         elif s["mode"] == "toggle":
             hint = f"Press {key}, speak, then press {key} again: the text goes into the focused text box."
         else:
@@ -611,7 +663,8 @@ class App:
         self.overlay.hide()
         self.root.withdraw()
         self.root.update()
-        self.engine.close()
+        if self.engine is not None:
+            self.engine.close()
         if self.tray is not None:
             self.tray.stop()
         self.root.destroy()
@@ -624,10 +677,11 @@ class App:
     def _on_hotkey(self):
         if self.capturing:
             return
-        if self.engine_state != "ready":
+        if self.engine_state == "error":
             self._sound("error")
-            msg = "NPU engine still loading…" if self.engine_state == "loading" else "NPU engine stopped (see app)"
-            return self.overlay.show("info" if self.engine_state == "loading" else "error", msg, hold_s=1.5)
+            return self.overlay.show("error", "NPU engine stopped (see app)", hold_s=1.5)
+        if self.engine_state == "unloaded" and not self.recording:
+            self._load_engine()  # audio is queued for the engine while it loads
         if self.settings["mode"] == "toggle":
             return self._stop() if self.recording else self._start()
         if not self.recording and self._start():
@@ -651,6 +705,7 @@ class App:
             del self.sessions[self.session]
             return False
         self.recording = True
+        self.last_active = time.perf_counter()
         self._sound("start")
         self.overlay.show("recording")
         self._refresh()
@@ -660,8 +715,9 @@ class App:
         self.recording = False
         self.recorder.stop()
         self.sessions[self.session]["t_stop"] = time.perf_counter()
+        self.last_active = time.perf_counter()
         self._sound("stop")
-        self.overlay.show("busy")
+        self.overlay.show("busy", "Loading the model, then transcribing…" if self.engine_state == "loading" else "")
         self._refresh()
 
     def _check_done(self, session):
@@ -718,6 +774,10 @@ class App:
         if self.sent and self.engine_state == "ready" and time.perf_counter() - min(self.sent.values()) > WATCHDOG_S:
             self._engine_failed("The NPU did not answer within 30 s (possible NPU hang). Dictation is stopped; "
                                 "quit the app. If Windows reports a display/NPU reset, reboot before using the NPU.")
+        u = self.settings["unload_after_s"]
+        if (u > 0 and self.engine_state == "ready" and not self.recording and not self.sent and not self.sessions
+                and self.out_q.empty() and time.perf_counter() - self.last_active > u):
+            self._unload_engine()
         self.root.after(20, self._poll)
 
     def _engine_failed(self, msg):
@@ -745,11 +805,16 @@ class App:
                 self.sessions[session]["n"] = n
                 self._check_done(session)
         elif kind == "engine":
-            msg = ev[1]
+            if ev[1] != self.engine_gen:
+                return  # from an engine that was unloaded
+            msg = ev[2]
+            self.last_active = time.perf_counter()
             if msg[0] == "status":
                 self.engine_msg = msg[1]
             elif msg[0] == "ready":
                 self.engine_state = "ready"
+                now = time.perf_counter()
+                self.sent = {k: now for k in self.sent}  # queued while loading: the watchdog starts now
                 self.footer.configure(text=f"NPU engine ready in {msg[1]:.1f} s.")
             elif msg[0] == "fatal":
                 if self.engine_state != "error":
@@ -766,6 +831,7 @@ class App:
             self._refresh()
         elif kind == "output_done":
             _, session, mode, err = ev
+            self.last_active = time.perf_counter()
             if err:
                 self.overlay.show("error", "Could not insert the text", hold_s=2.0)
                 self.footer.configure(text=f"Insert failed: {err}. The text is in the history.")
