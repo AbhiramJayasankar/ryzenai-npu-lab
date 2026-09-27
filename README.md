@@ -28,7 +28,7 @@ array and would need changes.
   Ryzen AI route fails for a Conformer on Phoenix, and a hybrid encoder with
   custom IRON GEMMs that matches the FP32 WER at CPU speed with far less CPU
   load ([experiment 011](experiments/011_parakeet_npu.md)); the whole encoder on
-  the NPU at 188 ms per 10 s of audio, correct but not yet stable
+  the NPU at 185 ms per 10 s of audio, 2-2.7x the CPU with the FP32 WER
   ([experiment 012](experiments/012_all_npu_encoder.md)).
 * Checking whether an ONNX model really runs on the NPU or falls back to the
   CPU ([experiment 004](experiments/004_why_models_run.md)), plus a live

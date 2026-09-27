@@ -16,7 +16,6 @@ from pathlib import Path
 import numpy as np
 from ml_dtypes import bfloat16
 
-import npu_direct as nd
 import pk_engine as pk
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -200,6 +199,14 @@ class PkEncoder:
         off = sum(a.size for a in pos_packed)
         ctrl_len = pk.assign_headers(self.phases)
         self.lens = {"ctrl": ctrl_len, "weights": table["size"], "pos": off, "io": lay.io_len}
+        # Reject unsafe schedules before Buffer() opens an XRT device. design()
+        # checks again at compile time, but that is too late for this entry path.
+        problems = pk.check(self.phases, lay, self.lens)
+        if problems:
+            raise ValueError("inconsistent NPU program (no device opened):\n  " +
+                             "\n  ".join(problems[:20]))
+        import npu_direct as nd
+
         self.ctrl = nd.Buffer(ctrl_len, bfloat16)
         self.ctrl.array[:] = pk.ctrl_array(self.phases, lay)
         self.ctrl.to_device()

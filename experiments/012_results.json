@@ -1,0 +1,149 @@
+{
+ "date": "2026-09-27",
+ "driver": "32.0.20101.3760 (32.0.203.376)",
+ "npu_full_eval": {
+  "utterances": 210,
+  "audio_s": 1728.0550625,
+  "wer": 0.026719229084537888,
+  "errors": 122,
+  "words": 4566,
+  "pre_s": 3.7637676000000795,
+  "enc_s": 58.409978499999795,
+  "dec_s": 7.2476911999999345,
+  "total_s": 69.42143729999981,
+  "rtfx": 24.892239770725762,
+  "enc_rtfx": 29.584928926142407,
+  "word_diff_vs_cpu_fp32": 0.00984251968503937,
+  "identical_vs_cpu_fp32": 151,
+  "tag": "npu_full",
+  "load_s": 1.7755788000000052,
+  "npu_s": 53.386540999999966,
+  "enc_cpu_s": 129.5,
+  "single_window": {
+   "utterances": 152,
+   "wer_npu": 0.025711662075298437,
+   "errors_npu": 56,
+   "wer_cpu_fp32_unchunked": 0.025711662075298437,
+   "errors_cpu_fp32_unchunked": 56,
+   "words": 2178
+  },
+  "chunked": {
+   "utterances": 58,
+   "wer_npu": 0.02763819095477387,
+   "errors_npu": 66,
+   "wer_cpu_fp32_unchunked": 0.018425460636515914,
+   "errors_cpu_fp32_unchunked": 44,
+   "words": 2388
+  },
+  "npu_ms_per_window_median": 185.41270000001475
+ },
+ "cpu_fp32_same_chunking": {
+  "utterances": 58,
+  "audio_s": 940.5299375,
+  "wer": 0.02763819095477387,
+  "errors": 66,
+  "words": 2388,
+  "pre_s": 2.2714121999998724,
+  "enc_s": 43.622889600000065,
+  "dec_s": 4.227966399999929,
+  "total_s": 50.122268199999866,
+  "rtfx": 18.764712198319916,
+  "enc_rtfx": 21.560468509174562,
+  "word_diff_vs_cpu_fp32": 0.018417748011720386,
+  "identical_vs_cpu_fp32": 2,
+  "tag": "cpu_fp32_chunked",
+  "load_s": null
+ },
+ "encoder_test_1block": {
+  "runs": 12,
+  "clips": 4,
+  "npu_ms": [
+   217.8,
+   220.7,
+   225.7,
+   210.3
+  ],
+  "cosine": [
+   0.999939,
+   0.999931,
+   0.999941,
+   0.999819
+  ],
+  "rel_rms": [
+   0.01106,
+   0.01175,
+   0.01084,
+   0.01905
+  ],
+  "transcripts_identical_to_fp32": 4,
+  "repeats_bit_identical": true
+ },
+ "npu_whole_utterances": {
+  "utterances": 210,
+  "audio_s": 1728.0550625,
+  "wer": 0.021901007446342532,
+  "errors": 100,
+  "words": 4566,
+  "pre_s": 1.7085269000000949,
+  "enc_s": 59.7973226000002,
+  "dec_s": 6.6919004999997185,
+  "total_s": 68.19775000000001,
+  "rtfx": 25.338886730134053,
+  "enc_rtfx": 28.89853570969069,
+  "word_diff_vs_cpu_fp32": 0.00021872265966754156,
+  "identical_vs_cpu_fp32": 205,
+  "one_block": {
+   "utterances": 152,
+   "wer_npu": 0.025711662075298437,
+   "errors_npu": 56,
+   "wer_cpu_fp32": 0.025711662075298437,
+   "errors_cpu_fp32": 56,
+   "words": 2178,
+   "npu_ms_median": 185.41270000001475
+  },
+  "two_block": {
+   "utterances": 47,
+   "wer_npu": 0.018161180476730987,
+   "errors_npu": 32,
+   "wer_cpu_fp32": 0.018161180476730987,
+   "errors_cpu_fp32": 32,
+   "words": 1762,
+   "npu_ms_median": 427.9480000000149
+  },
+  "three_block": {
+   "utterances": 11,
+   "wer_npu": 0.019169329073482427,
+   "errors_npu": 12,
+   "wer_cpu_fp32": 0.019169329073482427,
+   "errors_cpu_fp32": 12,
+   "words": 626,
+   "npu_ms_median": 764.6978999999874
+  }
+ },
+ "encoder_test_2block": {
+  "runs": 12,
+  "npu_ms": [
+   389.1,
+   390.9,
+   398.3,
+   375.9
+  ],
+  "same_as_1block": true
+ },
+ "encoder_test_3block": {
+  "runs": 15,
+  "npu_ms": [
+   621.8,
+   626.9,
+   638.7,
+   606.7,
+   815.1
+  ],
+  "clip_30s": {
+   "frames": 383,
+   "cosine": 0.999908,
+   "rel_rms": 0.0136,
+   "same_text": true
+  }
+ }
+}
