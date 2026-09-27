@@ -24,6 +24,12 @@ array and would need changes.
   optimized CPU runtime (llama.cpp) is still faster for decode.
 * Writing and running custom AI Engine kernels through IRON/XRT, bypassing
   the Ryzen AI ONNX compiler ([experiment 005](experiments/005_low_level_access.md)).
+* Speech-to-text with **NVIDIA Parakeet TDT 0.6B v2** on the NPU: why the
+  Ryzen AI route fails for a Conformer on Phoenix, and a hybrid encoder with
+  custom IRON GEMMs that matches the FP32 WER at CPU speed with far less CPU
+  load ([experiment 011](experiments/011_parakeet_npu.md)); the whole encoder on
+  the NPU at 188 ms per 10 s of audio, correct but not yet stable
+  ([experiment 012](experiments/012_all_npu_encoder.md)).
 * Checking whether an ONNX model really runs on the NPU or falls back to the
   CPU ([experiment 004](experiments/004_why_models_run.md)), plus a live
   YOLOv8 webcam NPU vs CPU benchmark ([experiment 002](experiments/002_webcam_yolov8.md)).
@@ -81,6 +87,9 @@ The laptop also has an older Conda-compatible installation, so an unqualified `c
 
 ## Where to continue
 
+For speech-to-text, [experiment 011](experiments/011_parakeet_npu.md) ends
+with measured limits and estimates for an all-NPU Parakeet encoder.
+
 For the LFM2.5 engine, start with the
 [experiment 010 handoff](experiments/010_handoff.md): design, hardware
 budgets, debugging workflow and ranked next steps (INT8 weights, attention
@@ -98,4 +107,5 @@ Peano, llvm-aie, XRT, pyxrt, Ryzen AI Software, Vitis AI execution provider,
 ONNX Runtime NPU, run LLM on AMD NPU, local LLM on Ryzen AI, NPU inference
 Windows 11, LFM2, LFM2.5, Liquid AI, small language model on NPU, BF16 on
 NPU, NPU vs CPU vs GPU benchmark, NPU memory bandwidth, custom NPU kernels,
-YOLOv8 on NPU.
+YOLOv8 on NPU, Parakeet on NPU, speech-to-text on AMD NPU, ASR on Ryzen AI,
+Conformer encoder on NPU.
