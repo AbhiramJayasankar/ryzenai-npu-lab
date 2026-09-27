@@ -11,7 +11,7 @@
 [Experiment 005](005_low_level_access.md) runs custom BF16 and INT16 kernels on the Phoenix NPU through the open IRON/XRT toolchain. It verifies correctness and compares warm calls for small and larger jobs with the [benchmark script](005_direct_kernel_benchmark.py).
 
 [Experiment 006](006_lfm25_full_npu.md) tracks the all-NPU LFM2.5-230M implementation, CPU/GPU baselines, and verified custom model operations on the Phoenix NPU.
-For the present state and a self-contained continuation guide, start with the [experiment 006 handoff](006_handoff.md).
+Its continuation guide for that path is the [experiment 006 handoff](006_handoff.md); the current engine is experiment 010.
 
 [Experiment 007](007_lfm25_chat.md) packages the model into a short-context interactive NPU chat runner and tests new prompts against sequential CPU BF16 token selections.
 
@@ -19,6 +19,6 @@ For the present state and a self-contained continuation guide, start with the [e
 
 [Experiment 009](009_prefill.md) measures a 20-word prompt against batched CPU BF16 prefill, then tests a correct four-core batched NPU projection with weight reuse. It records the remaining whole-model prefill gap and the DMA sharing needed for further tile parallelism.
 
-[Experiment 010](010_x8_engine.md) rebuilds the engine around the NPU's measured DDR bandwidth: eight cores with one DMA stream each, one core program for every layer and the vocabulary head, and one submission per token. Decode runs at 17.2 ms per token (at the ~27 GB/s ceiling) and prompts at 4.6 ms per token, matching the CPU BF16 reference; it includes the probes, validation scripts and a chat runner.
+[Experiment 010](010_x8_engine.md) rebuilds the engine around the NPU's measured DDR bandwidth: eight cores with one DMA stream each, one core program for every layer and the vocabulary head, and one submission per token. Decode runs at 17.2 ms per token (at the ~27 GB/s ceiling) and prompts at 4.6 ms per token, matching the CPU BF16 reference; it includes the probes, validation scripts and a chat runner. Continue from the [experiment 010 handoff](010_handoff.md).
 
 For each experiment, record the model and source, software and driver versions, input shape, CPU/NPU settings, warm-up and measurement method, operator placement, raw results, and a short conclusion. Commit small result files and notes; keep downloaded models and datasets outside Git.

@@ -1,5 +1,8 @@
 # Experiment 010: eight-core LFM2.5-230M engine on the Phoenix NPU
 
+For continuing this work (design details, budgets, debugging, next steps),
+read the [experiment 010 handoff](010_handoff.md).
+
 A rewrite of the all-NPU LFM2.5-230M path around the one measured limit
 that matters for single-user decoding: how fast the NPU can read weights from
 DDR. Every model calculation still runs on the NPU, in BF16, and matches the
@@ -23,6 +26,21 @@ the separate BF16 CPU whole-prompt benchmark measured 42.3 ms. The NPU thus
 still loses on this short prefill by about 4.3×. The CPU token-by-token column
 above matches the NPU's streaming schedule, while the whole-prompt CPU
 figure is the appropriate comparison for prefill latency.
+
+**Optimized CPU runtime.** llama.cpp (build b10948, 8 threads, GPU hidden
+with `CUDA_VISIBLE_DEVICES=-1`) on the same Ryzen 9 8945HS, `llama-bench`
+tg128 / pp512:
+
+| GGUF | Decode | Prompt |
+| --- | ---: | ---: |
+| F16 (closest to this engine's BF16) | 91 tok/s (11.0 ms) | 1715 tok/s |
+| Q8_0 | 160 tok/s | 1306 tok/s |
+| Q4_0 | 254 tok/s | 2374 tok/s |
+
+So the NPU engine (58 tok/s) is faster than PyTorch on the CPU but slower
+than llama.cpp on the CPU, which reads weights from DDR faster than the
+NPU's ~27 GB/s and processes prompts as matrix-matrix work. The NPU's case is
+lower power while the CPU stays free, not raw speed.
 
 The chat runner, [`010_lfm25_npu_chat.py`](010_lfm25_npu_chat.py), streams
 replies at about 58 tokens/s with state reuse across turns and a 4096-position
@@ -112,9 +130,9 @@ reading fewer bytes per token.
 
 ```powershell
 # Chat (first launch compiles 12 instruction streams, cached afterwards):
-& .\scripts\iron_python.ps1 experiments\010_lfm25_npu_chat.py
+& .\scripts\chat_lfm25_x8.ps1
 # One prompt:
-& .\scripts\iron_python.ps1 experiments\010_lfm25_npu_chat.py --prompt "Hello!" --json
+& .\scripts\chat_lfm25_x8.ps1 -Message "Hello!" -MaxNewTokens 64
 # Checks and benchmarks:
 & .\scripts\iron_python.ps1 experiments\010_x8_validate.py --check
 & .\scripts\iron_python.ps1 experiments\010_prefill_validate.py
@@ -148,6 +166,9 @@ of the FP32 vector helpers.
   AIE2; the batched sigmoid avoids it.
 
 ## What is left
+
+Ranked with estimates and implementation notes in the
+[handoff](010_handoff.md#10-what-to-do-next-ranked).
 
 * **Fewer bytes per token.** Decode is at the DMA ceiling. Weight
   quantization (for example INT8 with per-row scales) would roughly halve

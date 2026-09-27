@@ -11,12 +11,19 @@ object at the start of each weight stream selects recurrent, attention or
 head work. One XRT submission runs a whole token: 14 layers (four stages
 each) and the head, sequenced by the runtime DMA program.
 
+A second program, prefill_design(), runs PB = 4 prompt tokens per weight
+pass (kernels/x8/x8p_core.cc) on the same weights, conv states and caches.
+experiments/010_handoff.md explains the whole engine and its constraints.
+
 `io` layout, in BF16 elements:
   [0:512)       token aux: cos(64) | sin(64) | int32 past length |
                 int32 KV block count
   SLOT(s, k)    stage s output of core k, 512 elements each
   SLOT(5, k)    vocabulary candidates, SLOT(6, 0) the selected id
   STATE(i, k)   conv state of recurrent layer i, core k
+  PAUX(t)       batched prompt: token t's aux object
+  PSLOT(s,t,k)  batched prompt: stage s output of token t, core k
+  PEMB(t)       batched prompt: token t's embedding row (staged by the host)
 """
 
 import hashlib
