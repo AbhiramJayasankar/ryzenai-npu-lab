@@ -1,15 +1,46 @@
-# Ryzen AI NPU Lab
+# Ryzen AI NPU Lab: run an LLM and custom kernels on the AMD XDNA NPU
+
+Hands-on, reproducible experiments for the **AMD Ryzen AI NPU** (XDNA,
+AIE-ML tiles) on Windows 11: a small language model running **entirely on the
+NPU**, custom BF16/INT16 kernels written with AMD's open **IRON / MLIR-AIE**
+toolchain and **XRT**, and vision models (YOLOv8, ResNet50, MobileNetV2 and
+more) through **Ryzen AI Software** and ONNX Runtime's Vitis AI execution
+provider. Every result is measured against the CPU (and the GPU where
+relevant), with scripts to reproduce it.
+
+**Tested on:** Ryzen 9 8945HS ("Hawk Point") laptop, NPU driver
+32.0.203.280, Ryzen AI Software 1.7.0, IRON/MLIR-AIE 1.4.3. The same
+first-generation XDNA NPU ("NPU1", Phoenix) is in Ryzen 7040 and 8040
+series mobile processors with Ryzen AI and in Ryzen 8000G desktop APUs, so the
+code should apply there; Ryzen AI 300 "Strix" (XDNA 2 / NPU2) has a different
+array and would need changes.
+
+**What you can learn or run here**
+
+* Chat with **Liquid AI LFM2.5-230M** on the NPU at **58 tokens/s**, with all
+  model arithmetic on the NPU in BF16 ([experiment 010](experiments/010_x8_engine.md)).
+* How the NPU actually performs for LLM inference: DDR bandwidth (~27 GB/s
+  measured), program-memory and DMA limits, NPU vs CPU vs GPU, and why an
+  optimized CPU runtime (llama.cpp) is still faster for decode.
+* Writing and running custom AI Engine kernels through IRON/XRT, bypassing
+  the Ryzen AI ONNX compiler ([experiment 005](experiments/005_low_level_access.md)).
+* Checking whether an ONNX model really runs on the NPU or falls back to the
+  CPU ([experiment 004](experiments/004_why_models_run.md)), plus a live
+  YOLOv8 webcam NPU vs CPU benchmark ([experiment 002](experiments/002_webcam_yolov8.md)).
 
 **Current result:** The [eight-core LFM2.5-230M engine](experiments/010_x8_engine.md)
 runs every model calculation on the Phoenix NPU in BF16 at **17.2 ms per
-generated token (58 tokens/s)**, faster than the same token-by-token schedule
-on 8 CPU threads (~30 ms) and ~26× faster than this lab's earlier NPU path.
+generated token (58 tokens/s)**, ~26× faster than this lab's earlier NPU
+path. It beats PyTorch BF16 on 8 CPU threads (~33 tokens/s) but not an
+optimized CPU runtime: llama.cpp on the same CPU decodes this model at 91
+tokens/s in F16 and 160 tokens/s in Q8_0.
 Prompts run four tokens per weight pass at 4.6 ms per token; a 161-token
 prompt reaches its first reply token in 0.82 s. Decode is at the NPU's
 measured ~27 GB/s DDR read ceiling. Outputs match the CPU BF16 reference
 token for token except at exact BF16 ties. Chat with
-`& .\scripts\iron_python.ps1 experiments\010_lfm25_npu_chat.py` from this
-repository's root (4096-position context).
+`& .\scripts\chat_lfm25_x8.ps1` from this repository's root (4096-position
+context). To continue the work, start with the
+[experiment 010 handoff](experiments/010_handoff.md).
 
 The earlier [short-context chat runner](experiments/007_lfm25_chat.md) and
 the [experiment 006 handoff](experiments/006_handoff.md) record the first
@@ -50,11 +81,21 @@ The laptop also has an older Conda-compatible installation, so an unqualified `c
 
 ## Where to continue
 
-The current LFM2.5 proof and battery comparison are recorded. The
-[chat experiment](experiments/007_lfm25_chat.md) explains how to run short
-conversations and where speed and context still need work. AMD's guide calls
-for the `X1` target on this hardware. The
-earlier vision experiments remain available for model compatibility and
-operator placement study.
+For the LFM2.5 engine, start with the
+[experiment 010 handoff](experiments/010_handoff.md): design, hardware
+budgets, debugging workflow and ranked next steps (INT8 weights, attention
+bookkeeping, longer context, power). The earlier vision experiments remain
+available for model compatibility and operator placement study.
 
 Experiment notes and measurements will live in [`experiments/`](experiments/README.md). Keep downloaded models, datasets, caches, and secrets out of Git.
+
+## Keywords
+
+AMD NPU, Ryzen AI NPU, XDNA, XDNA NPU LLM, AMD Phoenix NPU, Hawk Point NPU,
+Ryzen 7040 NPU, Ryzen 8040 NPU, Ryzen 8000G NPU, Ryzen 9 8945HS, Ryzen 7
+8840HS, Ryzen 7 7840HS, AI Engine, AIE-ML, AIE2, NPU1, IRON, MLIR-AIE,
+Peano, llvm-aie, XRT, pyxrt, Ryzen AI Software, Vitis AI execution provider,
+ONNX Runtime NPU, run LLM on AMD NPU, local LLM on Ryzen AI, NPU inference
+Windows 11, LFM2, LFM2.5, Liquid AI, small language model on NPU, BF16 on
+NPU, NPU vs CPU vs GPU benchmark, NPU memory bandwidth, custom NPU kernels,
+YOLOv8 on NPU.
