@@ -25,6 +25,7 @@ start compiles it for ~2 min).
 | Mode | toggle (press, speak, press) or hold to talk |
 | Microphone | system default or a specific input |
 | Insert text | paste (the previous clipboard text is restored; if the clipboard holds an image or files the text is typed instead), type as keystrokes, or copy only |
+| Free memory | unload the model after N seconds idle (0 = keep it loaded). Unloading ends the engine process and frees its ~1.4 GB; the next shortcut press reloads it (~4 s) while you already speak, and the text arrives once it is ready |
 | Other | trailing space, start/stop sounds, recording indicator, start minimized, start with Windows |
 
 Settings live in `%APPDATA%\NPU Dictate\settings.json`. No audio or
