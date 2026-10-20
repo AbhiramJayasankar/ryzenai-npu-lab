@@ -1,0 +1,402 @@
+[
+[
+7.007,
+"out",
+"programs ready in 3.2 s"
+],
+[
+7.007,
+"out",
+"\r\n"
+],
+[
+10.048,
+"out",
+"weights packed in 6.3 s"
+],
+[
+10.048,
+"out",
+"\r\n"
+],
+[
+10.304,
+"out",
+"LFM2.5-230M on the Phoenix NPU. Type /quit to exit, /reset to clear."
+],
+[
+10.304,
+"out",
+"\r\nYou: "
+],
+[
+10.304,
+"in",
+"What is an NPU? Answer in two sentences."
+],
+[
+10.304,
+"out",
+"NPU: "
+],
+[
+10.444,
+"out",
+"An"
+],
+[
+10.461,
+"out",
+" NP"
+],
+[
+10.478,
+"out",
+"U"
+],
+[
+10.495,
+"out",
+" ("
+],
+[
+10.511,
+"out",
+"Ne"
+],
+[
+10.528,
+"out",
+"ural"
+],
+[
+10.545,
+"out",
+" Processing"
+],
+[
+10.562,
+"out",
+" Unit"
+],
+[
+10.579,
+"out",
+")"
+],
+[
+10.596,
+"out",
+" is"
+],
+[
+10.613,
+"out",
+" a"
+],
+[
+10.632,
+"out",
+" type"
+],
+[
+10.649,
+"out",
+" of"
+],
+[
+10.667,
+"out",
+" artificial"
+],
+[
+10.686,
+"out",
+" intelligence"
+],
+[
+10.704,
+"out",
+" hardware"
+],
+[
+10.721,
+"out",
+" designed"
+],
+[
+10.739,
+"out",
+" to"
+],
+[
+10.756,
+"out",
+" process"
+],
+[
+10.774,
+"out",
+" and"
+],
+[
+10.792,
+"out",
+" analyze"
+],
+[
+10.81,
+"out",
+" large"
+],
+[
+10.828,
+"out",
+" amounts"
+],
+[
+10.845,
+"out",
+" of"
+],
+[
+10.863,
+"out",
+" data"
+],
+[
+10.881,
+"out",
+" quickly"
+],
+[
+10.899,
+"out",
+" and"
+],
+[
+10.917,
+"out",
+" efficiently"
+],
+[
+10.935,
+"out",
+"."
+],
+[
+10.954,
+"out",
+" It"
+],
+[
+10.973,
+"out",
+" is"
+],
+[
+10.991,
+"out",
+" used"
+],
+[
+11.008,
+"out",
+" in"
+],
+[
+11.031,
+"out",
+" areas"
+],
+[
+11.052,
+"out",
+" such"
+],
+[
+11.069,
+"out",
+" as"
+],
+[
+11.086,
+"out",
+" image"
+],
+[
+11.104,
+"out",
+" and"
+],
+[
+11.121,
+"out",
+" speech"
+],
+[
+11.138,
+"out",
+" recognition"
+],
+[
+11.156,
+"out",
+","
+],
+[
+11.173,
+"out",
+" natural"
+],
+[
+11.19,
+"out",
+" language"
+],
+[
+11.207,
+"out",
+" processing"
+],
+[
+11.225,
+"out",
+","
+],
+[
+11.242,
+"out",
+" and"
+],
+[
+11.26,
+"out",
+" machine"
+],
+[
+11.277,
+"out",
+" learning"
+],
+[
+11.294,
+"out",
+" tasks"
+],
+[
+11.312,
+"out",
+"."
+],
+[
+11.329,
+"out",
+"\r\n(20 prompt tokens in 0.134 s, 50 tokens at 56.4 tok/s, state rebuilt)"
+],
+[
+11.33,
+"out",
+"\r\nYou: "
+],
+[
+11.33,
+"in",
+"Write a haiku about a laptop that thinks."
+],
+[
+11.33,
+"out",
+"NPU: "
+],
+[
+11.466,
+"out",
+"A"
+],
+[
+11.484,
+"out",
+" laptop"
+],
+[
+11.501,
+"out",
+" wh"
+],
+[
+11.519,
+"out",
+"isp"
+],
+[
+11.537,
+"out",
+"ers"
+],
+[
+11.555,
+"out",
+" secrets"
+],
+[
+11.573,
+"out",
+",\r\n"
+],
+[
+11.591,
+"out",
+"th"
+],
+[
+11.608,
+"out",
+"inking"
+],
+[
+11.626,
+"out",
+" through"
+],
+[
+11.644,
+"out",
+" data"
+],
+[
+11.662,
+"out",
+"'s"
+],
+[
+11.679,
+"out",
+" endless"
+],
+[
+11.697,
+"out",
+" flow"
+],
+[
+11.714,
+"out",
+"."
+],
+[
+11.732,
+"out",
+"\r\n(20 prompt tokens in 0.136 s, 15 tokens at 56.5 tok/s, state reused)"
+],
+[
+11.732,
+"out",
+"\r\nYou: "
+],
+[
+11.732,
+"in",
+"/quit"
+]
+]
