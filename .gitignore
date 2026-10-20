@@ -5,9 +5,12 @@
 
 # Python and Conda environments
 .venv/
+.venv-ci/
 venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
 .ipynb_checkpoints/
 
 # Downloads and generated model files
