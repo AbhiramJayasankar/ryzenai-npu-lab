@@ -52,5 +52,27 @@ Measured on the laptop (Ryzen 9 8945HS): 180 to 230 ms of NPU time per piece
 of up to 10 s; the text is inserted about 0.25 to 0.35 s after the second
 press. The engine process uses ~1.4 GB of RAM (the BF16 weights).
 
-Test hook: `NPU_DICTATE_FAKE_MIC=file.wav` plays a 16 kHz WAV as the
-microphone.
+## Troubleshooting
+
+* **"Not enough free memory for the model".** Loading the model locks its
+  1.2 GB of buffers into RAM (error `0xc01e0200`, "could not page-in"). With
+  little free RAM this fails. The app then waits and tries again on the next
+  shortcut press. Close large programs (WSL/Docker, databases, browsers), or
+  set the unload time to 0 so the model is loaded once and kept: every
+  reload needs the 1.2 GB again.
+* **Logs:** `%APPDATA%\NPU Dictate\app.log` (engine starts, exit codes,
+  failures) and `engine.log` (timings). Started from a Claude Code session,
+  the app sees Claude's private copy of AppData
+  (`%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\NPU Dictate`) and is
+  closed when Claude updates; start it from the Start menu or the startup
+  shortcut instead.
+* A failure while loading (before the NPU runs anything) is recoverable: one
+  automatic retry if the engine process died, otherwise the next shortcut
+  press. A failure after that (an NPU error, or no answer within 30 s) stops
+  dictation until the app is restarted, by design (NPU hangs can crash
+  Windows on this driver).
+
+Test hooks (environment variables): `NPU_DICTATE_FAKE_MIC=file.wav` plays a
+16 kHz WAV as the microphone; `NPU_DICTATE_TEST_START_FAIL=1` makes model
+loading fail; `NPU_DICTATE_TEST_DIE_ONCE=<file>` kills the engine at startup
+once if the file exists; `NPU_DICTATE_TEST_QUIT_AFTER=<s>` quits the app.

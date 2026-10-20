@@ -39,6 +39,7 @@ OUTPUTS = {"paste": "Paste (your clipboard is restored)", "type": "Type it as ke
 COLORS = {"loading": "#8e8e93", "unloaded": "#8e8e93", "ready": "#30a14e", "recording": "#e5484d", "busy": "#d9a400",
           "error": "#e5484d"}
 WATCHDOG_S = 30.0
+START_TIMEOUT_S = 30.0  # the engine must say something this soon after it is spawned
 S = 1.0  # display scale (DPI / 96), set when the window is created
 
 
@@ -47,6 +48,10 @@ def px(v):
 
 
 # -- settings, sounds, icon ------------------------------------------------------
+def log(msg):
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}", flush=True)
+
+
 def load_settings():
     try:
         return {**DEFAULTS, **json.loads((APPDIR / "settings.json").read_text(encoding="utf-8"))}
@@ -122,23 +127,32 @@ def make_shortcut(path, icon):
 # -- engine process proxy --------------------------------------------------------
 class Engine:
     def __init__(self, post, gen):
-        self.gen, self.closing = gen, False
+        self.gen, self.closing, self.spoke = gen, False, False
+        self.t0 = time.perf_counter()
         ctx = mp.get_context("spawn")
         self.inq, self.outq = ctx.Queue(), ctx.Queue()
+        # Audio put into the queue of an engine that died stays unread; without this
+        # the app froze at exit waiting for it (seen 2026-10).
+        self.inq.cancel_join_thread()
         self.proc = ctx.Process(target=engine.serve, args=(self.inq, self.outq, str(APPDIR / "engine.log")),
                                 daemon=True, name="npu-engine")
         self.proc.start()
-        threading.Thread(target=self._read, args=(post,), daemon=True).start()
+        log(f"engine {gen}: spawned pid {self.proc.pid}")
+        threading.Thread(target=self._read, args=(post,), daemon=True, name=f"engine-{gen}-read").start()
 
     def _read(self, post):
         while True:
             try:
-                post(("engine", self.gen, self.outq.get(timeout=1.0)))
+                msg = self.outq.get(timeout=1.0)
+                self.spoke = True
+                post(("engine", self.gen, msg))
             except queue.Empty:
                 if not self.proc.is_alive():
+                    log(f"engine {self.gen}: pid {self.proc.pid} exited with code {self.proc.exitcode}"
+                        f"{' (closed by the app)' if self.closing else ''}")
                     if not self.closing:
-                        post(("engine", self.gen,
-                              ("fatal", f"The engine process exited (code {self.proc.exitcode}).")))
+                        # Died before its first message: it never reached the NPU.
+                        post(("engine", self.gen, ("died", self.proc.exitcode, self.spoke)))
                     return
 
     def send(self, session, index, audio):
@@ -150,6 +164,9 @@ class Engine:
         if self.proc.is_alive():
             self.inq.put(("quit",))
             self.proc.join(10)
+        if self.proc.is_alive():
+            log(f"engine {self.gen}: pid {self.proc.pid} did not quit in 10 s, killing it")
+            self.proc.kill()
 
 
 # -- audio capture ---------------------------------------------------------------
@@ -210,7 +227,7 @@ class Recorder:
             if ch is not None and kind in ("audio", "stop"):
                 for p in pieces:
                     self.app.post(("sent", session, index))
-                    self.app.engine.send(session, index, p)
+                    self.app.send_piece(session, index, p)
                     index += 1
                 if kind == "stop":
                     self.app.post(("ended", session, index, self.seconds))
@@ -345,6 +362,9 @@ class App:
         self.post = self.ui_q.put
         self.engine_state, self.engine_msg = "loading", "Starting the NPU engine…"
         self.engine, self.engine_gen = None, 0
+        self.start_retries = 0
+        self.unanswered = {}  # (session, index) -> audio sent but not transcribed yet
+        self.send_lock = threading.Lock()
         self.last_active = time.perf_counter()
         self.recording = False
         self.session = 0
@@ -378,6 +398,8 @@ class App:
         if self.settings["start_minimized"] and self.tray is not None:
             self.root.withdraw()
         self.root.after(20, self._poll)
+        if os.environ.get("NPU_DICTATE_TEST_QUIT_AFTER"):  # test hook
+            self.root.after(int(float(os.environ["NPU_DICTATE_TEST_QUIT_AFTER"]) * 1000), self.quit)
 
     # ---- UI -----------------------------------------------------------------
     def _build_ui(self):
@@ -487,15 +509,58 @@ class App:
         self.footer = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=px(520), justify="left")
         self.footer.pack(fill="x", pady=(px(8), px(0)))
 
-    def _load_engine(self):
-        self.engine_gen += 1
-        self.engine_state, self.engine_msg = "loading", "Loading the model onto the NPU…"
-        self.engine = Engine(self.post, self.engine_gen)
+    def send_piece(self, session, index, audio):
+        """Called from the recorder thread."""
+        with self.send_lock:
+            self.unanswered[(session, index)] = audio
+            if self.engine is not None:
+                self.engine.send(session, index, audio)
+
+    def _load_engine(self, resend=False):
+        with self.send_lock:
+            self.engine_gen += 1
+            self.engine_state, self.engine_msg = "loading", "Loading the model onto the NPU…"
+            self.engine = Engine(self.post, self.engine_gen)
+            if resend:  # audio the dead engine never transcribed
+                for (session, index), audio in sorted(self.unanswered.items()):
+                    self.engine.send(session, index, audio)
+        self._refresh()
+
+    def _engine_start_failed(self, why, retry=True):
+        """The engine failed before its first NPU submission (it died, stayed silent, or
+        could not set up its buffers and hardware context), so starting it again is safe.
+        retry: one automatic retry first; otherwise wait for the next shortcut press."""
+        log(f"engine {self.engine_gen}: start failed: {why}")
+        eng = self.engine
+        threading.Thread(target=eng.close, daemon=True, name="engine-close").start()
+        if retry and self.start_retries < 1:
+            self.start_retries += 1
+            self.footer.configure(text=f"The engine failed to start ({why}); trying again…")
+            return self._load_engine(resend=True)
+        with self.send_lock:
+            self.engine, self.unanswered = None, {}
+            self.engine_gen += 1
+        self.start_retries = 0
+        self.engine_state = "unloaded"
+        if self.recording:
+            self.recording = False
+            self.recorder.stop()
+        self.sent.clear()
+        self.sessions.clear()
+        memory = "memory" in why
+        self.overlay.show("error", "Not enough free memory for the model" if memory else
+                          "Engine failed to start, try again", hold_s=3.0)
+        self.footer.configure(text=(f"The model could not be loaded: {why}. Close some programs and press the "
+                                    "shortcut again." if memory else
+                                    f"The engine failed to start ({why}); press the shortcut to try again.")
+                              + " The last dictation was lost. Details in app.log.")
         self._refresh()
 
     def _unload_engine(self):
-        eng, self.engine = self.engine, None
-        self.engine_gen += 1  # ignore anything the old process still sends
+        with self.send_lock:
+            eng, self.engine = self.engine, None
+            self.engine_gen += 1  # ignore anything the old process still sends
+        log(f"unloading the engine after {self.settings['unload_after_s']} s idle")
         self.engine_state = "unloaded"
         threading.Thread(target=eng.close, daemon=True, name="engine-close").start()
         self.footer.configure(text=f"Model unloaded after {self.settings['unload_after_s']} s idle (memory freed); "
@@ -774,6 +839,10 @@ class App:
         if self.sent and self.engine_state == "ready" and time.perf_counter() - min(self.sent.values()) > WATCHDOG_S:
             self._engine_failed("The NPU did not answer within 30 s (possible NPU hang). Dictation is stopped; "
                                 "quit the app. If Windows reports a display/NPU reset, reboot before using the NPU.")
+        eng = self.engine
+        if (eng is not None and self.engine_state == "loading" and not eng.spoke
+                and time.perf_counter() - eng.t0 > START_TIMEOUT_S):
+            self._engine_start_failed(f"no answer within {START_TIMEOUT_S:.0f} s")
         u = self.settings["unload_after_s"]
         if (u > 0 and self.engine_state == "ready" and not self.recording and not self.sent and not self.sessions
                 and self.out_q.empty() and time.perf_counter() - self.last_active > u):
@@ -782,6 +851,8 @@ class App:
 
     def _engine_failed(self, msg):
         self.engine_state, self.engine_msg = "error", msg
+        with self.send_lock:
+            self.unanswered = {}
         if self.recording:
             self.recording = False
             self.recorder.stop()
@@ -813,15 +884,28 @@ class App:
                 self.engine_msg = msg[1]
             elif msg[0] == "ready":
                 self.engine_state = "ready"
+                self.start_retries = 0
                 now = time.perf_counter()
                 self.sent = {k: now for k in self.sent}  # queued while loading: the watchdog starts now
                 self.footer.configure(text=f"NPU engine ready in {msg[1]:.1f} s.")
+            elif msg[0] == "start_failed":
+                if self.engine_state == "loading":
+                    self._engine_start_failed(msg[1], retry=False)
+            elif msg[0] == "died":
+                _, code, spoke = msg
+                if not spoke and self.engine_state == "loading":
+                    self._engine_start_failed(f"exit code {code}")
+                elif self.engine_state != "error":
+                    self._engine_failed(f"The engine process exited (code {code}).")
             elif msg[0] == "fatal":
+                log(f"engine {self.engine_gen}: fatal: {msg[1]}")
                 if self.engine_state != "error":
                     self._engine_failed(msg[1])
             elif msg[0] == "text":
                 _, session, index, text, audio_s, npu_s, total_s = msg
                 self.sent.pop((session, index), None)
+                with self.send_lock:
+                    self.unanswered.pop((session, index), None)
                 s = self.sessions.get(session)
                 if s is not None:
                     s["parts"][index] = text
@@ -855,11 +939,13 @@ def main():
         messagebox.showinfo(APP, "NPU Dictate is already running (look for its tray icon).")
         return
     APPDIR.mkdir(parents=True, exist_ok=True)
-    log = open(APPDIR / "app.log", "a", buffering=1, encoding="utf-8")
-    sys.stdout = sys.stderr = log
+    log_file = open(APPDIR / "app.log", "a", buffering=1, encoding="utf-8")
+    sys.stdout = sys.stderr = log_file
     print(f"\n=== app start {time.strftime('%Y-%m-%d %H:%M:%S')}")
     app = App()
     app.root.mainloop()
+    log("app exit")
+    os._exit(0)  # never wait on leftover threads or queues at interpreter shutdown
 
 
 if __name__ == "__main__":
