@@ -1,5 +1,8 @@
 # Ryzen AI NPU Lab
 
+[![CI](https://github.com/AbhiramJayasankar/ryzenai-npu-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/AbhiramJayasankar/ryzenai-npu-lab/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **A language model and a speech-recognition model running on the AMD Ryzen AI
 NPU, with hand-written AI Engine kernels.**
 
@@ -152,6 +155,7 @@ bit-identical output.
 | [`apps/npu_dictate/`](apps/npu_dictate) | Push-to-talk dictation app for Windows |
 | [`experiments/`](experiments/README.md) | Numbered experiments 001–012: write-ups, probes, validation and benchmark scripts |
 | [`docs/setup.md`](docs/setup.md) | Hardware, software versions and how to set up IRON on Windows |
+| [`tests/`](tests) | CPU-only tests run by CI: the dictation chunker and the chart renderer (the NPU code is checked on the laptop by the validation scripts) |
 | [`docs/writeup.md`](docs/writeup.md) | Technical write-up: the measurements, both designs, the hang and what is left |
 
 ## Run it
