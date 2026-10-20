@@ -18,6 +18,16 @@ and GPU baselines on the same laptop.
 | **Reliability** | NPU hangs that crashed Windows twice were traced to a hardware queue overflow. A static checker now rejects unsafe programs before they reach the NPU, and 566 submissions have run since then without a hang. |
 | **App** | [NPU Dictate](apps/npu_dictate/README.md): press a shortcut, speak, and the text is typed into any window, with speech recognition on the NPU. |
 
+<img alt="Terminal recording: chatting with LFM2.5-230M on the NPU at 56 tokens/s" src="docs/img/demo_chat.svg" width="876">
+
+<img alt="Terminal recording: three LibriSpeech clips transcribed with the Parakeet encoder on the NPU, 191 to 197 ms of NPU time each" src="docs/img/demo_stt.svg" width="876">
+
+Both recordings are real runs on the laptop, captured with
+[`docs/demo/record.py`](docs/demo/record.py). Tokens appear at the recorded
+speed. The model-loading wait is shortened, and the typed input is replayed
+at typing speed ([`render.py`](docs/demo/render.py) lists every edit). For
+the full story, read the [technical write-up](docs/writeup.md).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/llm_decode_dark.svg">
   <img alt="LFM2.5-230M decode speed: llama.cpp Q8_0 on the CPU 160 tok/s, llama.cpp F16 91, NPU 8-core engine 58, PyTorch BF16 on the CPU 33, first all-NPU path 2.2" src="docs/img/llm_decode_light.svg" width="760">
@@ -142,6 +152,7 @@ bit-identical output.
 | [`apps/npu_dictate/`](apps/npu_dictate) | Push-to-talk dictation app for Windows |
 | [`experiments/`](experiments/README.md) | Numbered experiments 001–012: write-ups, probes, validation and benchmark scripts |
 | [`docs/setup.md`](docs/setup.md) | Hardware, software versions and how to set up IRON on Windows |
+| [`docs/writeup.md`](docs/writeup.md) | Technical write-up: the measurements, both designs, the hang and what is left |
 
 ## Run it
 
@@ -202,6 +213,11 @@ Measured or confirmed on this Phoenix (NPU1) laptop; they shaped both engines.
 | Buffer arguments per runtime sequence | 6 work; 8 compile but hang |
 | Scalar floating point | none on the core; scalar float code is emulated and ~1 ms per layer |
 | FP32 → BF16 conversion | truncates by default; set round-to-nearest-even |
+
+## License
+
+[MIT](LICENSE). The models keep their own licenses: LFM2.5 under Liquid AI's
+LFM Open License v1.0, Parakeet TDT 0.6B v2 under CC-BY-4.0.
 
 <details>
 <summary>Keywords</summary>

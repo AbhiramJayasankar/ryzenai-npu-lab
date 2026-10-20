@@ -1,0 +1,52 @@
+[
+[
+0.902,
+"out",
+"loading the NPU encoder (1.2 GB of weights; the first run compiles for ~1-2 min) ..."
+],
+[
+0.902,
+"out",
+"\r\n"
+],
+[
+6.061,
+"out",
+"ready in 5.2 s"
+],
+[
+6.061,
+"out",
+"\r\n== cache\\parakeet\\librispeech_wav\\1089-134686-0021.wav\r\n"
+],
+[
+6.342,
+"out",
+"\r                                                            \r[ 6.5 s audio | NPU  191 ms | total  274 ms] If a layman, in giving baptism, pour the water before saying the words, is the child baptized?"
+],
+[
+6.342,
+"out",
+"\r\n== cache\\parakeet\\librispeech_wav\\121-121726-0000.wav\r\n"
+],
+[
+6.638,
+"out",
+"\r                                                            \r[ 8.5 s audio | NPU  197 ms | total  292 ms] also a popular contrivance whereby love making may be suspended, but not stopped, during the picnic season."
+],
+[
+6.638,
+"out",
+"\r\n== cache\\parakeet\\librispeech_wav\\1284-1180-0000.wav\r\n"
+],
+[
+7.088,
+"out",
+"\r                                                            \r[ 8.1 s audio | NPU  195 ms | total  444 ms] He wore blue silk stockings, blue knee pants with gold buckles, a blue ruffled waist, and a jacket of bright blue braided with gold."
+],
+[
+7.088,
+"out",
+"\r\n"
+]
+]
