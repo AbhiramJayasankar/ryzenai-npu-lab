@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="302" viewBox="0 0 760 302" font-family="'Segoe UI', -apple-system, 'Helvetica Neue', Arial, sans-serif" role="img" aria-label="LFM2.5-230M decode speed, one stream">
+<rect width="760" height="302" rx="10" fill="#1a1a19"/>
+<text x="20" y="32" font-size="17" font-weight="600" fill="#f0efec">LFM2.5-230M decode speed, one stream</text>
+<text x="20" y="54" font-size="13" fill="#c3c2b7">tokens per second, higher is better · Ryzen 9 8945HS</text>
+<line x1="367.5" y1="72" x2="367.5" y2="268" stroke="#2c2c2a" stroke-width="1"/>
+<text x="367.5" y="286" font-size="11" fill="#898781" text-anchor="middle">40</text>
+<line x1="475.0" y1="72" x2="475.0" y2="268" stroke="#2c2c2a" stroke-width="1"/>
+<text x="475.0" y="286" font-size="11" fill="#898781" text-anchor="middle">80</text>
+<line x1="582.5" y1="72" x2="582.5" y2="268" stroke="#2c2c2a" stroke-width="1"/>
+<text x="582.5" y="286" font-size="11" fill="#898781" text-anchor="middle">120</text>
+<line x1="690.0" y1="72" x2="690.0" y2="268" stroke="#2c2c2a" stroke-width="1"/>
+<text x="690.0" y="286" font-size="11" fill="#898781" text-anchor="middle">160</text>
+<text x="260.0" y="286" font-size="11" fill="#898781" text-anchor="middle">0</text>
+<text x="248" y="101.5" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="end">CPU · llama.cpp Q8_0</text>
+<path d="M260,88.0 H686.0 Q690.0,88.0 690.0,92.0 V102.0 Q690.0,106.0 686.0,106.0 H260 Z" fill="#55544f"/>
+<text x="698.0" y="101.5" font-size="13" font-weight="400" fill="#f0efec">160 tok/s</text>
+<text x="248" y="139.5" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="end">CPU · llama.cpp F16</text>
+<path d="M260,126.0 H500.5625 Q504.5625,126.0 504.5625,130.0 V140.0 Q504.5625,144.0 500.5625,144.0 H260 Z" fill="#55544f"/>
+<text x="512.6" y="139.5" font-size="13" font-weight="400" fill="#f0efec">91 tok/s</text>
+<text x="248" y="177.5" font-size="13" font-weight="600" fill="#f0efec" text-anchor="end">NPU · 8-core engine (exp 010)</text>
+<path d="M260,164.0 H411.875 Q415.875,164.0 415.875,168.0 V178.0 Q415.875,182.0 411.875,182.0 H260 Z" fill="#3987e5"/>
+<text x="423.9" y="177.5" font-size="13" font-weight="600" fill="#f0efec">58 tok/s</text>
+<text x="248" y="215.5" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="end">CPU · PyTorch BF16, 8 threads</text>
+<path d="M260,202.0 H344.6875 Q348.6875,202.0 348.6875,206.0 V216.0 Q348.6875,220.0 344.6875,220.0 H260 Z" fill="#55544f"/>
+<text x="356.7" y="215.5" font-size="13" font-weight="400" fill="#f0efec">33 tok/s</text>
+<text x="248" y="253.5" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="end">NPU · first all-NPU path (exp 006)</text>
+<path d="M260,240.0 H261.9125 Q265.9125,240.0 265.9125,244.0 V254.0 Q265.9125,258.0 261.9125,258.0 H260 Z" fill="#55544f"/>
+<text x="273.9" y="253.5" font-size="13" font-weight="400" fill="#f0efec">2.2 tok/s</text>
+<line x1="260" y1="72" x2="260" y2="268" stroke="#383835" stroke-width="1"/>
+</svg>
