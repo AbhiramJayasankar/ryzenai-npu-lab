@@ -39,6 +39,12 @@ class NpuEncoder:
 
 
 def serve(inq, outq, log_path):
+    import os
+
+    die = os.environ.get("NPU_DICTATE_TEST_DIE_ONCE")  # test hook: die at startup if this file exists
+    if die and os.path.exists(die):
+        os.remove(die)
+        os._exit(3)
     log = open(log_path, "a", buffering=1, encoding="utf-8")
     sys.stdout = sys.stderr = log
     print(f"\n=== engine start {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -53,9 +59,23 @@ def serve(inq, outq, log_path):
         import parakeet_pipeline as pp
         import pk_model as pm
 
+        if os.environ.get("NPU_DICTATE_TEST_START_FAIL"):  # test hook
+            raise RuntimeError("Failed to create hw queue (0xc01e0200): could not page-in (test)")
         enc = NpuEncoder(pp, pm, np)
         model = pp.Parakeet(enc)
-        model.transcribe(np.zeros(pp.SR, np.float32))  # warm-up
+    except Exception as e:
+        # Nothing has been submitted to the NPU yet (buffers, hardware context and
+        # program setup only), so the app may start the engine again later.
+        print(traceback.format_exc())
+        text = str(e)
+        if "0xc01e0200" in text or "page-in" in text or isinstance(e, MemoryError):
+            reason = "not enough free memory for the NPU model (it needs ~1.3 GB)"
+        else:
+            reason = f"{type(e).__name__}: {text.splitlines()[0] if text else ''}"
+        outq.put(("start_failed", reason))
+        return
+    try:
+        model.transcribe(np.zeros(pp.SR, np.float32))  # warm-up (first NPU submissions)
         load_s = time.perf_counter() - t
         print(f"ready in {load_s:.1f} s")
         outq.put(("ready", load_s))
