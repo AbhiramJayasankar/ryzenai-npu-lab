@@ -1,0 +1,7 @@
+# Runtime of the packaged app (Python 3.13; pyxrt.pyd comes from the XRT SDK, see build/build.ps1)
+numpy==2.5.3
+onnxruntime==1.30.0
+ml_dtypes==0.6.0
+sounddevice==0.5.6
+pystray==0.19.5
+pillow==12.3.0

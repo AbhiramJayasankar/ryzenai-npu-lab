@@ -19,7 +19,7 @@ and GPU baselines on the same laptop.
 | **LLM:** [Liquid AI LFM2.5-230M](https://huggingface.co/LiquidAI/LFM2.5-230M), all arithmetic on the NPU | **58 tokens/s** (17.2 ms per token), 26× faster than this lab's first NPU version and at the NPU's measured memory-bandwidth limit. Matches the CPU BF16 reference token for token, except where the CPU's top two choices tie exactly. |
 | **Speech to text:** [NVIDIA Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2), whole encoder on the NPU | **185 ms per 10 s of audio**, 2.7× faster than the CPU in FP32, with **exactly the FP32 word error rate** (2.19% on 210 LibriSpeech utterances). |
 | **Reliability** | NPU hangs that crashed Windows twice were traced to a hardware queue overflow. A static checker now rejects unsafe programs before they reach the NPU, and 566 submissions have run since then without a hang. |
-| **App** | [NPU Dictate](apps/npu_dictate/README.md): press a shortcut, speak, and the text is typed into any window, with speech recognition on the NPU. |
+| **App** | [NPU Dictate](apps/npu_dictate/README.md): press a shortcut, speak, and the text goes into any window, with speech recognition on the NPU. A portable 43 MB download ([releases](https://github.com/AbhiramJayasankar/ryzenai-npu-lab/releases)) that needs only the AMD NPU driver: no Python, IRON or compiler. |
 
 <img alt="Terminal recording: chatting with LFM2.5-230M on the NPU at 56 tokens/s" src="docs/img/demo_chat.svg" width="876">
 
@@ -174,7 +174,7 @@ powershell -NoProfile -File .\scripts\iron_python.ps1 experiments\010_x8_validat
 # Live microphone transcription on the NPU
 powershell -NoProfile -File .\scripts\parakeet_npu_demo.ps1
 
-# The dictation app
+# The dictation app, from the repository (the release zip needs none of this)
 powershell -NoProfile -File "apps\npu_dictate\NPU Dictate.ps1"
 ```
 

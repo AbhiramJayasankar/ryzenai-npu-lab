@@ -3,8 +3,11 @@
 Pieces are sent to the engine while you are still speaking, so only the last
 piece is left to transcribe when the recording stops. A piece ends at a pause
 (>= 0.6 s of silence once it holds 6 s of audio), or, at 10 s, at the quietest
-point of its last 3 s. Pieces without speech are dropped.
+point of its last 3 s. A recording without speech yields nothing; once speech
+was heard, even a short last piece is kept (it may end a cut word).
 """
+
+from collections import deque
 
 import numpy as np
 
@@ -16,6 +19,7 @@ CUT_BLOCKS = int(3.0 * SR / BLOCK)
 PAUSE_BLOCKS = 20  # 0.6 s
 MIN_VOICED = 6  # 0.18 s of speech
 MIN_RMS = 0.004
+ADAPT_BLOCKS = 100  # 3 s: a level this steady is background, not speech
 PAD = int(0.3 * SR)  # silence appended to every piece
 LIMIT = int(10.2 * SR)  # the 1-block NPU program holds 10.24 s
 
@@ -28,6 +32,8 @@ class Chunker:
     def __init__(self):
         self.blocks, self.levels, self.speech = [], [], []
         self.noise = None
+        self.recent = deque(maxlen=ADAPT_BLOCKS)  # levels of the last 3 s
+        self.heard = False  # a piece with speech has been emitted
         self.level = 0.0
         self.pending = np.zeros(0, np.float32)
         self.total = 0
@@ -45,21 +51,34 @@ class Chunker:
 
     def finish(self):
         if len(self.pending):
+            r = rms(self.pending)
             self.blocks.append(self.pending)
-            self.levels.append(rms(self.pending))
-            self.speech.append(False)
+            self.levels.append(r)
+            self.speech.append(self.noise is not None and self._voiced(r))
             self.pending = np.zeros(0, np.float32)
         return self._emit(len(self.blocks))
+
+    def _voiced(self, r):
+        return r > max(3.0 * self.noise, MIN_RMS)
 
     def _block(self, b):
         r = self.level = rms(b)
         if self.noise is None:
-            self.noise = r
-        voiced = r > max(3.0 * self.noise, MIN_RMS)
+            # Start low: speech (or the start sound) in the first block must not
+            # become the noise floor, and quiet speech must count from the start.
+            # A noisier room raises it below.
+            self.noise = min(r, MIN_RMS / 3)
+        voiced = self._voiced(r)
         if r < self.noise:
             self.noise = 0.7 * self.noise + 0.3 * r
         elif not voiced:
             self.noise = 0.98 * self.noise + 0.02 * r
+        self.recent.append(r)
+        if len(self.recent) == ADAPT_BLOCKS and min(self.recent) > 3.0 * self.noise:
+            # Even the quietest 30 ms of the last 3 s counts as speech, which real
+            # speech (with its gaps between syllables) never does: it is steady
+            # background (a fan, hum), so that is the noise floor.
+            self.noise = min(self.recent)
         self.blocks.append(b)
         self.levels.append(r)
         self.speech.append(voiced)
@@ -73,8 +92,9 @@ class Chunker:
     def _emit(self, k):
         piece, voiced = self.blocks[:k], sum(self.speech[:k])
         self.blocks, self.levels, self.speech = self.blocks[k:], self.levels[k:], self.speech[k:]
-        if not piece or voiced < MIN_VOICED:
+        if not piece or voiced < (1 if self.heard else MIN_VOICED):
             return []
+        self.heard = True
         audio = np.concatenate(piece)
         # Trailing silence: without it Parakeet tends to invent an ending for a
         # sentence cut mid-word ("... suggested that the menu was a very good idea").
