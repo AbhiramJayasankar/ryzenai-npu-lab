@@ -238,9 +238,7 @@ def load_settings():
     for k, v in (saved.items() if isinstance(saved, dict) else ()):
         if k in DEFAULTS and type(v) is type(DEFAULTS[k]):
             out[k] = v
-    try:
-        win32.parse(out["shortcut"])
-    except (KeyError, AttributeError):
+    if not valid_shortcut(out["shortcut"]):
         out["shortcut"] = DEFAULTS["shortcut"]
     if out["mode"] not in MODES:
         out["mode"] = DEFAULTS["mode"]
@@ -248,6 +246,16 @@ def load_settings():
         out["output"] = DEFAULTS["output"]
     out["unload_after_s"] = unload_seconds(out["unload_after_s"])
     return out
+
+
+def valid_shortcut(combo):
+    """A known key with Ctrl, Alt, Shift or Win, or F1 to F24 alone: any other key
+    alone is taken from every app (a plain F could no longer be typed)."""
+    try:
+        mods, _ = win32.parse(combo)
+    except (KeyError, AttributeError):
+        return False
+    return bool(mods) or combo.lower() in {f"f{i}" for i in range(1, 25)}
 
 
 def unload_seconds(v):
@@ -1315,6 +1323,7 @@ class App:
         self.session = 0
         self.sessions = {}
         self.capturing = False
+        self.shortcut_ok = True  # the last registration of a shortcut worked
         self.history = []
         self.sounds = make_sounds()
         self.icon_path = APPDIR / "icon.ico"
@@ -1784,7 +1793,11 @@ class App:
         self.hero.set(key.split("+"), "capturing" if self.capturing else "pressed" if self.recording
                       else "error" if self.engine_state == "error"
                       else "muted" if self.engine_state in ("loading", "download", "unloaded") else "normal")
-        if self.engine_state == "download":
+        # Not registered: pressing the shortcut does nothing (after an NPU error the hint says to restart).
+        taken = not self.shortcut_ok and not self.capturing and self.engine_state != "error"
+        if taken:
+            hint = f"{key} is used by another app: choose another shortcut."
+        elif self.engine_state == "download":
             done, total = self.downloading
             hint = (f"Downloading the speech model, {done / 2**20:.0f} of {total / 2**20:.0f} MB. "
                     "This happens once; the app is ready when it is done.")
@@ -1813,10 +1826,11 @@ class App:
             self.progress["value"] = 1000 * done / max(total, 1)
         self._show_history()
         tray = getattr(self, "tray", None)
-        if tray is not None and getattr(self, "_tray_state", None) != state:
-            self._tray_state = state
+        title = f"{APP}: {key} is used by another app" if taken else f"{APP}: {STATES[state]}"
+        if tray is not None and getattr(self, "_tray_state", None) != (state, title):
+            self._tray_state = (state, title)
             tray.icon = icon_image(COLORS[state])
-            tray.title = f"{APP}: {STATES[state]}"
+            tray.title = title
 
     def _show_history(self):
         """The history list, newest first; the empty text names the current shortcut."""
@@ -1836,7 +1850,7 @@ class App:
 
     # ---- shortcut ------------------------------------------------------------
     def _register_shortcut(self, combo):
-        ok = self.hotkey.set(combo)
+        ok = self.shortcut_ok = self.hotkey.set(combo)
         if not ok:
             self.footer.configure(text=f"{win32.label(combo)} is taken by another app; choose another shortcut.")
         return ok
@@ -1849,7 +1863,20 @@ class App:
         self.root.deiconify()
         self.root.focus_force()
         self.root.bind("<KeyPress>", self._on_capture_key)
+        self.root.bind("<FocusOut>", self._on_capture_focus_out)
         self._refresh()
+
+    def _on_capture_focus_out(self, event):
+        """Capture ends, with the saved shortcut back, once focus has left the app.
+        The root binding also sees focus move between widgets, hence the check later."""
+        def check():
+            try:
+                gone = self.root.focus_get() is None
+            except KeyError:  # a Combobox list has focus (older tkinter raises here)
+                gone = False
+            if self.capturing and gone:
+                self._end_capture(self.settings["shortcut"])
+        self.root.after(50, check)
 
     def _on_capture_key(self, event):
         if event.keysym == "Escape":
@@ -1857,7 +1884,7 @@ class App:
         combo = win32.combo_from_event(event.keycode, event.state)
         if combo is None:
             return  # a modifier on its own: wait for the main key
-        if "+" not in combo and not combo.startswith("f"):
+        if not valid_shortcut(combo):
             self.footer.configure(text="Use Ctrl, Alt, Shift or Win with the key, or an F-key on its own.")
             return
         if self._register_shortcut(combo):
@@ -1866,6 +1893,7 @@ class App:
 
     def _end_capture(self, combo, registered=False):
         self.root.unbind("<KeyPress>")
+        self.root.unbind("<FocusOut>")
         self.capturing = False
         if not registered:
             self._register_shortcut(combo)
@@ -1916,6 +1944,8 @@ class App:
     def hide_window(self):
         if self.tray is None:
             return self.quit()
+        if self.capturing:  # the saved shortcut works again while the window is hidden
+            self._end_capture(self.settings["shortcut"])
         self.root.withdraw()
         if not getattr(self, "_told_tray", False):
             self._told_tray = True
