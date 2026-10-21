@@ -435,6 +435,19 @@ def set_app_id(app_id):
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
 
 
+CSIDL_PROGRAMS, CSIDL_DESKTOPDIRECTORY = 0x02, 0x10
+
+
+def shell_folder(csidl):
+    """Path of a folder of the current user, e.g. CSIDL_DESKTOPDIRECTORY (also when
+    the Desktop was moved, as OneDrive folder backup does)."""
+    buf = ctypes.create_unicode_buffer(260)  # MAX_PATH
+    hr = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)  # SHGFP_TYPE_CURRENT
+    if hr != 0:
+        raise OSError(f"Windows did not find the folder (CSIDL {csidl:#04x}, HRESULT {hr & 0xFFFFFFFF:#010x})")
+    return buf.value
+
+
 def set_dpi_aware():
     """Render at the real screen resolution instead of being bitmap-scaled by Windows."""
     try:

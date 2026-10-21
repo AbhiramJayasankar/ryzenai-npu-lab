@@ -346,8 +346,12 @@ def make_shortcut(path, icon):
           f"$s.TargetPath={q(target)};$s.Arguments={q(args)};"
           f"$s.WorkingDirectory={q(Path(target).parent if FROZEN else LAUNCHER.parent)};$s.IconLocation={q(icon)};"
           f"$s.Description='Dictation with Parakeet on the Ryzen AI NPU';$s.WindowStyle=7;$s.Save()")
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, capture_output=True,
-                   creationflags=subprocess.CREATE_NO_WINDOW)
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    if r.returncode:  # PowerShell's error, not the command line
+        err = r.stderr.decode("oem", "replace").strip()
+        log(f"shortcut {path} failed (exit code {r.returncode}):\n{err}")
+        raise OSError(err.splitlines()[0] if err else f"PowerShell exit code {r.returncode}")
 
 
 # -- start with Windows (HKCU Run key; no admin rights needed) -------------------
@@ -367,9 +371,8 @@ def autostart_registered():
         return False
 
 
-def autostart_enabled():
-    """True if Windows will start the app at sign-in: the Run value points at this
-    copy of the app and Task Manager's Startup tab has not disabled it."""
+def autostart_points_here():
+    """True if the Run value for the app exists and starts this copy of the app."""
     import winreg
 
     try:
@@ -378,7 +381,15 @@ def autostart_enabled():
     except OSError:
         return False
     target, _ = launch_command()
-    if target.lower() not in value.lower():
+    return target.lower() in value.lower()
+
+
+def autostart_enabled():
+    """True if Windows will start the app at sign-in: the Run value points at this
+    copy of the app and Task Manager's Startup tab has not disabled it."""
+    import winreg
+
+    if not autostart_points_here():
         return False
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_KEY) as k:
@@ -388,7 +399,9 @@ def autostart_enabled():
         return True
 
 
-def set_autostart(on):
+def set_autostart(on, clear_disabled=True):
+    """Write (on) or delete the Run value. Turning it on also clears a "disabled" mark
+    from Task Manager or Settings, unless clear_disabled=False (only the path is repaired)."""
     import winreg
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
@@ -400,11 +413,12 @@ def set_autostart(on):
                 winreg.DeleteValue(k, APP)
             except FileNotFoundError:
                 pass
-    try:  # clear a "disabled" mark from Task Manager, which would win over the Run value
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_KEY, 0, winreg.KEY_SET_VALUE) as k:
-            winreg.DeleteValue(k, APP)
-    except OSError:
-        pass
+    if on and clear_disabled:
+        try:  # the "disabled" mark would win over the Run value
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_KEY, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.DeleteValue(k, APP)
+        except OSError:
+            pass
     if OLD_STARTUP_LNK.exists():  # the Startup-folder shortcut of older versions
         OLD_STARTUP_LNK.unlink()
 
@@ -1334,13 +1348,15 @@ class App:
                     set_autostart(True)
                     self.settings["autostart_set"] = True
                     save_settings(self.settings)
-                elif autostart_registered() and not autostart_enabled():
-                    set_autostart(True)  # the folder was moved or a new version unzipped elsewhere
+                elif autostart_registered() and not autostart_points_here():
+                    # the folder was moved or a new version unzipped elsewhere; a disable in Windows stays
+                    set_autostart(True, clear_disabled=False)
                     log(f"autostart now points to {sys.executable}")
             except OSError as e:
                 log(f"could not set up autostart: {e}")
 
         self.root = tk.Tk()
+        self.root.withdraw()  # shown at the end, so a start in the tray never flashes the window
         global S
         S = self.root.winfo_fpixels("1i") / 96
         self.root.title(APP)
@@ -1364,8 +1380,8 @@ class App:
                          "Open NPU Dictate from the tray and choose another shortcut.")
         self._start_model()
         self._refresh()
-        if (background or self.settings["start_minimized"]) and self.tray is not None:
-            self.root.withdraw()
+        if not (background or self.settings["start_minimized"]) or self.tray is None:
+            self.root.deiconify()
         self.root.after(20, self._poll)
         self.root.after(3000, self._poll_theme)
         if os.environ.get("NPU_DICTATE_TEST_QUIT_AFTER"):  # test hook
@@ -1910,13 +1926,17 @@ class App:
         self.autostart_var.set(autostart_enabled())
 
     def _make_shortcuts(self):
-        try:
-            for folder in (Path(os.environ["APPDATA"]) / "Microsoft/Windows/Start Menu/Programs",
-                           Path(os.environ["USERPROFILE"]) / "Desktop"):
-                make_shortcut(folder / f"{APP}.lnk", sys.executable if FROZEN else self.icon_path)
-            self.footer.configure(text="Shortcuts added to the Start menu and the desktop.")
-        except Exception as e:
-            self.footer.configure(text=f"Could not create shortcuts: {e}")
+        icon = sys.executable if FROZEN else self.icon_path
+        parts, ok = [], True
+        for name, csidl in (("Start menu", win32.CSIDL_PROGRAMS), ("desktop", win32.CSIDL_DESKTOPDIRECTORY)):
+            try:
+                make_shortcut(Path(win32.shell_folder(csidl)) / f"{APP}.lnk", icon)
+                parts.append(f"{name} shortcut added")
+            except Exception as e:
+                parts.append(f"{name} shortcut failed: {str(e).rstrip('.')}")
+                ok = False
+        self.footer.configure(text="Shortcuts added to the Start menu and the desktop." if ok
+                              else "; ".join(parts) + ".")
 
     # ---- tray ----------------------------------------------------------------
     def _start_tray(self):
