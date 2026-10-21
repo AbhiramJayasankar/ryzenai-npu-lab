@@ -28,6 +28,7 @@ opens the NPU to read its name and runs nothing on it).
 | Mode | toggle (press, speak, press) or hold to talk (releasing any key of the shortcut stops) |
 | Microphone | system default or a specific input (MME) |
 | Insert text | paste (your clipboard is restored unless you copied something in the meantime; if it holds an image, files or rich text the text is typed instead), type as keystrokes, or copy only |
+| Free memory | unload the model after N seconds idle (0 = keep it loaded, the default; otherwise 5 s to 1 day). Unloading ends the engine process and frees its ~1.4 GB; the next shortcut press loads it again (~3 s) while you already speak, and the text arrives once it is ready. Each reload creates a new NPU context. |
 | Other | trailing space, start/stop sounds, recording indicator, start minimized, start with Windows |
 
 If the focused window changed before the text was ready, or Shift/Alt/Win is
@@ -41,8 +42,8 @@ transcript is written to disk; the history list is kept in memory only.
   output, start with Windows (HKCU Run key). The shortcut is a Win32
   `RegisterHotKey` (no keyboard hook).
 * `engine.py`: the recognizer in its own process, so NPU calls never stall
-  the shortcut, audio capture or UI. The model stays loaded: the app never
-  unloads and reloads it, and it starts a new engine process only after the
+  the shortcut, audio capture or UI. The model stays loaded unless "Free
+  memory" is set, and the app starts a new engine process only after the
   previous one has exited.
 * `npu_runtime.py`: the encoder on the NPU with pyxrt only, from the exported
   bundle (one xclbin, two instruction streams, ctrl/position/weight buffers):
