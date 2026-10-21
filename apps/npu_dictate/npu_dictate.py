@@ -35,14 +35,14 @@ FROZEN = getattr(sys, "frozen", False)
 LAUNCHER = Path(__file__).resolve().parent / "NPU Dictate.ps1"
 DEFAULTS = {"shortcut": "ctrl+shift+space", "mode": "toggle", "microphone": "", "output": "paste",
             "trailing_space": True, "sounds": True, "overlay": True, "start_minimized": False,
-            "autostart_set": False}
+            "autostart_set": False, "unload_after_s": 0}
 MODES = {"toggle": "Press to start, press again to insert", "hold": "Hold to talk, release to insert"}
 OUTPUTS = {"paste": "Paste (your clipboard is restored)", "type": "Type it as keystrokes",
            "clipboard": "Only copy to the clipboard"}
 STATES = {"loading": "Loading", "download": "Downloading", "waiting": "Waiting", "ready": "Ready",
-          "recording": "Recording", "error": "Stopped"}
+          "unloaded": "Unloaded", "recording": "Recording", "error": "Stopped"}
 COLORS = {"loading": "#8e8e93", "download": "#8e8e93", "waiting": "#d9a400", "ready": "#30a14e",
-          "recording": "#e5484d", "error": "#e5484d"}
+          "unloaded": "#8e8e93", "recording": "#e5484d", "error": "#e5484d"}
 WATCHDOG_S = 30.0  # NPU work (a piece, or the warm-up) must finish this soon
 START_TIMEOUT_S = 60.0  # the engine must reach the NPU this soon after it is spawned
 RETRY_S = (10, 30, 60, 120, 300)  # waits between attempts to load the model
@@ -79,7 +79,13 @@ def load_settings():
         out["mode"] = DEFAULTS["mode"]
     if out["output"] not in OUTPUTS:
         out["output"] = DEFAULTS["output"]
+    out["unload_after_s"] = unload_seconds(out["unload_after_s"])
     return out
+
+
+def unload_seconds(v):
+    """The idle time before the model is unloaded: 0 (never), else 5 s to one day."""
+    return 0 if v <= 0 else max(5, min(86400, v))
 
 
 def save_settings(s):
@@ -530,7 +536,9 @@ class App:
         self.want_engine = False
         self.retry_at, self.retries, self.died_retries = None, 0, 0
         self.busy = None  # (engine gen, start time): NPU work in progress, for the watchdog
+        self.last_active = time.monotonic()  # last recording, engine answer or insert: for unload_after_s
         self.downloading = None  # (done, total) bytes while the model downloads
+        self.model_ok = False  # the model files loaded fine in this session
         self.quitting = False
         self.send_lock = threading.Lock()
         self.backlog = []  # pieces recorded while no engine process exists yet
@@ -649,6 +657,18 @@ class App:
         for k, v in OUTPUTS.items():
             ttk.Radiobutton(of, text=v, value=k, variable=self.out_var, command=self._changed).pack(anchor="w")
         r += 1
+        ttk.Label(box, text="Free memory").grid(row=r, column=0, sticky="w", pady=px(4))
+        uf = ttk.Frame(box)
+        uf.grid(row=r, column=1, sticky="w", padx=(px(12), px(0)), pady=px(4))
+        ttk.Label(uf, text="Unload the model after").pack(side="left")
+        self.unload_var = tk.StringVar(value=str(self.settings["unload_after_s"]))
+        sp = ttk.Spinbox(uf, from_=0, to=86400, increment=30, width=7, textvariable=self.unload_var,
+                         command=self._unload_changed)
+        sp.pack(side="left", padx=px(6))
+        sp.bind("<Return>", self._unload_changed)
+        sp.bind("<FocusOut>", self._unload_changed)
+        ttk.Label(uf, text="s idle (0 = keep it loaded)").pack(side="left")
+        r += 1
         cf = ttk.Frame(box)
         cf.grid(row=r, column=0, columnspan=2, sticky="w", pady=(px(8), px(0)))
         self.checks = {}
@@ -704,7 +724,9 @@ class App:
         Never after an NPU failure: that state ends only with a restart of the app."""
         if self.engine_state == "error":
             return
-        if model_store.missing():
+        # Hashing the files takes ~0.1 s, which a reload after an idle unload would add
+        # before the microphone opens: once the model loaded, the files are trusted.
+        if not self.model_ok and model_store.missing():
             return self._start_download()
         self.want_engine = True
         self.engine_state, self.engine_msg = "loading", "Loading the model onto the NPU…"
@@ -744,6 +766,16 @@ class App:
                 eng.close()
             else:
                 threading.Thread(target=eng.close, daemon=True, name="engine-close").start()
+
+    def _unload_engine(self):
+        """Idle for unload_after_s: the engine process exits to free its ~1.4 GB. Not a
+        failure (no retry counting, no error shown): the next press loads the model
+        again, through _start_model, while you already speak."""
+        log(f"engine {self.engine_gen}: unloading the model after {self.settings['unload_after_s']} s idle")
+        self._close_engine()
+        self.engine_state = "unloaded"
+        self.footer.configure(text=f"Model unloaded after {self.settings['unload_after_s']} s idle to free memory.")
+        self._refresh()
 
     def _drop_dictations(self):
         """The dictations in progress cannot be transcribed: forget them."""
@@ -838,6 +870,21 @@ class App:
         save_settings(s)
         self._refresh()
 
+    def _unload_changed(self, event=None):
+        """Spinbox arrows, Return or leaving the field: a number is clamped and saved,
+        and the idle time counts from now; anything else is put back. Setting 0 while
+        unloaded does not load the model: the next press does."""
+        try:
+            v = unload_seconds(int(float(self.unload_var.get())))
+        except (ValueError, OverflowError):
+            v = self.settings["unload_after_s"]
+        self.unload_var.set(str(v))
+        if v != self.settings["unload_after_s"]:
+            self.settings["unload_after_s"] = v
+            self.last_active = time.monotonic()
+            save_settings(self.settings)
+            self._refresh()
+
     def _refresh(self):
         s = self.settings
         key = win32.label(s["shortcut"])
@@ -855,6 +902,9 @@ class App:
                     "once the model is ready.")
         elif self.engine_state in ("error", "waiting"):
             hint = self.engine_msg
+        elif self.engine_state == "unloaded":
+            hint = (f"The model is unloaded to free memory. Press {key} and just start speaking: it loads again "
+                    "in a few seconds and your speech is transcribed once it is ready.")
         elif s["mode"] == "toggle":
             hint = f"Press {key}, speak, then press {key} again: the text goes into the focused text box."
         else:
@@ -999,7 +1049,7 @@ class App:
             return
         if self.recording:  # a recording always ends the way it started, whatever the state
             return self._stop() if self.rec_mode == "toggle" else None
-        if self.engine_state == "waiting":
+        if self.engine_state in ("waiting", "unloaded"):
             self.retry_at = None
             self._start_model()  # audio is kept for the engine while it loads
         if self.engine_state == "error":
@@ -1022,6 +1072,7 @@ class App:
         self.post(("release", session))
 
     def _start(self):
+        self.last_active = time.monotonic()
         self.session += 1
         self.rec_mode = self.settings["mode"]
         self.sessions[self.session] = {"n": None, "parts": {}, "npu": 0.0, "t_stop": None, "seconds": 0.0,
@@ -1041,6 +1092,7 @@ class App:
         return True
 
     def _stop(self):
+        self.last_active = time.monotonic()
         self.recording = False
         self.recorder.stop()
         self.sessions[self.session]["t_stop"] = time.perf_counter()
@@ -1164,6 +1216,13 @@ class App:
         if (eng is not None and self.engine_state == "loading" and not eng.npu_used
                 and time.perf_counter() - eng.t0 > START_TIMEOUT_S):
             self._engine_start_failed(f"no answer within {START_TIMEOUT_S:.0f} s", retry=False)
+        # Unload after unload_after_s idle: only with the model loaded and nothing
+        # recorded, waiting for the engine, on the NPU or being inserted.
+        u = self.settings["unload_after_s"]
+        if (u > 0 and self.engine_state == "ready" and not self.recording and not self.sessions
+                and not self.backlog and self.busy is None and self.out_q.empty() and not self.out_busy
+                and time.monotonic() - self.last_active >= u):
+            self._unload_engine()
 
     def _handle(self, ev):
         kind = ev[0]
@@ -1182,6 +1241,7 @@ class App:
                 self._check_done(session)
         elif kind == "recorder_failed":
             if self.recording and ev[1] == self.session:
+                self.last_active = time.monotonic()
                 self.recording = False
                 self.recorder.stop()
             if self.sessions.pop(ev[1], None) is not None:
@@ -1220,8 +1280,12 @@ class App:
                 self.engine_state = "ready"
                 self.retries = self.died_retries = 0
                 self.busy = None
+                self.last_active = time.monotonic()
+                self.model_ok = True
                 self.footer.configure(text=f"NPU engine ready in {msg[1]:.1f} s.")
             elif msg[0] == "start_failed":
+                if msg[1].startswith("model files"):  # the engine found them damaged: check them again
+                    self.model_ok = False
                 if self.engine_state == "loading":
                     self._engine_start_failed(msg[1], retry=msg[2])
             elif msg[0] == "died":
@@ -1242,6 +1306,7 @@ class App:
             elif msg[0] in ("text", "piece_failed"):
                 session, index = msg[1], msg[2]
                 self.busy = None
+                self.last_active = time.monotonic()
                 s = self.sessions.get(session)
                 if s is not None:
                     if msg[0] == "text":
@@ -1254,6 +1319,7 @@ class App:
             self._refresh()
         elif kind == "output_done":
             _, session, done, err = ev
+            self.last_active = time.monotonic()
             if session is None:  # copied from the history list
                 self.footer.configure(text=f"Could not copy: {err}" if err else "Copied to the clipboard.")
             elif err:
