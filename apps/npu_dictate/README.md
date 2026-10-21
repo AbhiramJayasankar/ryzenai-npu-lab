@@ -70,7 +70,7 @@ press. The engine process uses ~1.4 GB of RAM (the BF16 weights).
 | The model files are missing or damaged | downloads them again |
 | An NPU error, or no answer within 30 s of NPU work (sleep time is not counted) | stops dictation for good and says so in a Windows notification: an NPU hang can crash Windows on this driver, so nothing retries. Restart Windows after a hang, then the app |
 | A CPU-side error in one piece | that piece is lost, dictation continues |
-| The app quits or crashes | the engine process notices and exits; it is never killed in the middle of an NPU submission |
+| The app quits or crashes | the engine process notices and exits (one still loading exits before its first NPU submission); it is never killed in the middle of an NPU submission. A restarted app waits for it, and stops with "restart Windows" if it is still running after 30 s |
 
 Logs: `%APPDATA%\NPU Dictate\app.log` (starts, failures), `engine.log`
 (timings), `fault.log` (native crash stacks).

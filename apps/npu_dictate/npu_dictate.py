@@ -42,7 +42,7 @@ OUTPUTS = {"paste": "Paste (your clipboard is restored)", "type": "Type it as ke
 STATES = {"loading": "Loading", "download": "Downloading", "waiting": "Waiting", "ready": "Ready",
           "unloaded": "Unloaded", "recording": "Recording", "error": "Stopped"}
 WATCHDOG_S = 30.0  # NPU work (a piece, or the warm-up) must finish this soon
-START_TIMEOUT_S = 60.0  # the engine must reach the NPU this soon after it is spawned
+START_TIMEOUT_S = 60.0  # the engine must reach the NPU this soon after it is spawned (sleep not counted)
 RETRY_S = (10, 30, 60, 120, 300)  # waits between attempts to load the model
 S = 1.0  # display scale (DPI / 96), set when the window is created
 
@@ -409,17 +409,19 @@ class Engine:
 
     def __init__(self, post, gen):
         self.gen, self.closing = gen, False
-        self.npu_used = False  # set once the engine reports its first NPU submission
-        self.t0 = time.perf_counter()
+        self.close_gave_up = False  # close() timed out with the process still alive
+        self.npu_since = None  # awake time its NPU work in progress began, by its own messages
+        self.t0 = win32.awake_time()
         ctx = mp.get_context("spawn")
         self.inq, self.outq = ctx.Queue(), ctx.Queue()
         self.stop_event = ctx.Event()  # set: the engine starts no further piece
+        self.npu_started = ctx.Event()  # set by the engine right before its first NPU submission
         # Audio put into the queue of an engine that died stays unread; without this
         # the app froze at exit waiting for it (seen 2026-10).
         self.inq.cancel_join_thread()
         self.proc = ctx.Process(target=engine.serve, daemon=True, name="npu-engine",
                                 args=(self.inq, self.outq, str(APPDIR / "engine.log"),
-                                      str(model_store.bundle_dir()), self.stop_event))
+                                      str(model_store.bundle_dir()), self.stop_event, self.npu_started))
         self.proc.start()
         log(f"engine {gen}: spawned pid {self.proc.pid}")
         threading.Thread(target=self._read, args=(post,), daemon=True, name=f"engine-{gen}-read").start()
@@ -435,18 +437,25 @@ class Engine:
                 msg = None
                 time.sleep(0.5)
             if msg is not None:
-                if msg[0] == "npu":
-                    self.npu_used = True
+                if msg[0] in ("npu", "busy"):  # read here also after the app closed it
+                    self.npu_since = win32.awake_time()
+                elif msg[0] in ("ready", "text", "piece_failed"):
+                    self.npu_since = None
                 post(("engine", self.gen, msg))
             elif not self.proc.is_alive():
                 log(f"engine {self.gen}: pid {self.proc.pid} exited with code {self.proc.exitcode}"
                     f"{' (closed by the app)' if self.closing else ''}")
                 if not self.closing:
-                    post(("engine", self.gen, ("died", self.proc.exitcode, self.npu_used)))
+                    post(("engine", self.gen, ("died", self.proc.exitcode, self.npu_started.is_set())))
                 return
 
     def alive(self):
         return self.proc.is_alive()
+
+    def npu_overdue(self, now):
+        """Alive and in NPU work for longer than WATCHDOG_S (an idle engine is never)."""
+        return (self.npu_since is not None and now - self.npu_since > WATCHDOG_S and self.npu_started.is_set()
+                and self.alive())
 
     def send(self, session, index, audio):
         self.inq.put(("audio", session, index, audio))
@@ -469,6 +478,7 @@ class Engine:
                 pass
             self.proc.join(wait_s)
         if self.proc.is_alive():
+            self.close_gave_up = True
             log(f"engine {self.gen}: pid {self.proc.pid} did not exit in {wait_s:.0f} s (stuck NPU call?); "
                 "leaving it to the driver")
 
@@ -1288,6 +1298,7 @@ class App:
         self.engine_state, self.engine_msg = "loading", "Starting the NPU engine…"
         self.engine, self.engine_gen = None, 0
         self.closing = []  # engines being closed; a new one starts only once these have exited
+        self.other_engine = None  # (first seen, last checked): an engine of an earlier run holds engine.MUTEX
         self.want_engine = False
         self.retry_at, self.retries, self.died_retries = None, 0, 0
         self.busy = None  # (engine gen, start time): NPU work in progress, for the watchdog
@@ -1583,12 +1594,29 @@ class App:
         self._refresh()
 
     def _spawn_if_possible(self):
-        self.closing = [e for e in self.closing if e.alive()]
+        gone = [e for e in self.closing if not e.alive()]
+        self.closing = [e for e in self.closing if e not in gone]
+        failed = next((e for e in gone if e.npu_started.is_set() and e.proc.exitcode), None)
+        if failed is not None and self.engine_state != "error":  # it went on to the NPU after it was closed
+            return self._engine_failed(f"The engine process exited (code {failed.proc.exitcode}) after it used "
+                                       "the NPU. Quit and start the app again.")
         if not self.want_engine or self.engine is not None or self.engine_state == "error":
             return
         if self.closing:
+            if not self._engine_stuck():
+                self.engine_msg = "Waiting for the previous engine process to exit…"
+            return
+        now = win32.awake_time()
+        if self.other_engine is not None and now - self.other_engine[1] < 1.0:
+            return  # checked about once a second
+        if win32.mutex_exists(engine.MUTEX):  # an engine process of an earlier run of the app is alive
+            self.other_engine = (self.other_engine[0] if self.other_engine else now, now)
+            if now - self.other_engine[0] > WATCHDOG_S:
+                return self._engine_failed("An NPU engine from an earlier run is still running (possible NPU "
+                                           "hang). Restart Windows, then start the app.")
             self.engine_msg = "Waiting for the previous engine process to exit…"
             return
+        self.other_engine = None
         try:
             with self.send_lock:
                 eng = Engine(self.post, self.engine_gen + 1)
@@ -1615,6 +1643,17 @@ class App:
                 eng.close()
             else:
                 threading.Thread(target=eng.close, daemon=True, name="engine-close").start()
+
+    def _engine_stuck(self):
+        """True while a closed engine process that Engine.close gave up on is alive:
+        no new engine may start, so dictation stops for good (shown on the overlay)."""
+        if not any(e.close_gave_up and e.alive() for e in self.closing):
+            return False
+        msg = "The previous engine process is still stuck in the NPU driver. Restart Windows."
+        if self.engine_state != "error":
+            self._engine_failed(msg)
+        self.overlay.show("error", msg, hold_s=3.0)
+        return True
 
     def _unload_engine(self):
         """Idle for unload_after_s: the engine process exits to free its ~1.4 GB. Not a
@@ -1909,6 +1948,8 @@ class App:
             return
         if self.recording:  # a recording always ends the way it started, whatever the state
             return self._stop() if self.rec_mode == "toggle" else None
+        if self._engine_stuck():  # neither "loading" nor a recording while it lives
+            return self._sound("error")
         if self.engine_state in ("waiting", "unloaded"):
             self.retry_at = None
             self._start_model()  # audio is kept for the engine while it loads
@@ -2066,13 +2107,18 @@ class App:
             self.retry_at = None
             self._start_model()
         # Watchdog on NPU work. The clock excludes sleep, so a laptop that sleeps
-        # in the middle of a piece does not count as an NPU hang.
-        if self.busy is not None and self.busy[0] == self.engine_gen and win32.awake_time() - self.busy[1] > WATCHDOG_S:
+        # in the middle of a piece does not count as an NPU hang. Closed engines are
+        # timed too while in NPU work (a warm-up begun after a start timeout).
+        now = win32.awake_time()
+        late = self.busy is not None and self.busy[0] == self.engine_gen and now - self.busy[1] > WATCHDOG_S
+        if late or self.engine_state != "error" and any(e.npu_overdue(now) for e in self.closing):
             self._engine_failed(f"The NPU did not answer within {WATCHDOG_S:.0f} s (possible NPU hang). Dictation "
                                 "is stopped. Restart Windows before using the NPU again, then start the app.")
         eng = self.engine
-        if (eng is not None and self.engine_state == "loading" and not eng.npu_used
-                and time.perf_counter() - eng.t0 > START_TIMEOUT_S):
+        if eng is not None and self.busy is None and self.engine_state == "loading" and eng.npu_started.is_set():
+            self.busy = (self.engine_gen, now)  # the warm-up began: timed even if its "npu" message is late
+        if (eng is not None and self.engine_state == "loading" and not eng.npu_started.is_set()
+                and now - eng.t0 > START_TIMEOUT_S):
             self._engine_start_failed(f"no answer within {START_TIMEOUT_S:.0f} s", retry=False)
         # Unload after unload_after_s idle: only with the model loaded and nothing
         # recorded, waiting for the engine, on the NPU or being inserted.
