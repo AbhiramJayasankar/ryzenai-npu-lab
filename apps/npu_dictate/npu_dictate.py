@@ -538,6 +538,7 @@ class App:
         self.busy = None  # (engine gen, start time): NPU work in progress, for the watchdog
         self.last_active = time.monotonic()  # last recording, engine answer or insert: for unload_after_s
         self.downloading = None  # (done, total) bytes while the model downloads
+        self.model_ok = False  # the model files loaded fine in this session
         self.quitting = False
         self.send_lock = threading.Lock()
         self.backlog = []  # pieces recorded while no engine process exists yet
@@ -723,7 +724,9 @@ class App:
         Never after an NPU failure: that state ends only with a restart of the app."""
         if self.engine_state == "error":
             return
-        if model_store.missing():
+        # Hashing the files takes ~0.1 s, which a reload after an idle unload would add
+        # before the microphone opens: once the model loaded, the files are trusted.
+        if not self.model_ok and model_store.missing():
             return self._start_download()
         self.want_engine = True
         self.engine_state, self.engine_msg = "loading", "Loading the model onto the NPU…"
@@ -1278,8 +1281,11 @@ class App:
                 self.retries = self.died_retries = 0
                 self.busy = None
                 self.last_active = time.monotonic()
+                self.model_ok = True
                 self.footer.configure(text=f"NPU engine ready in {msg[1]:.1f} s.")
             elif msg[0] == "start_failed":
+                if msg[1].startswith("model files"):  # the engine found them damaged: check them again
+                    self.model_ok = False
                 if self.engine_state == "loading":
                     self._engine_start_failed(msg[1], retry=msg[2])
             elif msg[0] == "died":
