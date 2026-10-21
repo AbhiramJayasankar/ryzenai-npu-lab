@@ -301,6 +301,9 @@ def icon_image(color, size=64):
     return img
 
 
+NOT_CONNECTED = " (not connected, using the default)"  # after a saved microphone that is missing
+
+
 def _mme():
     import sounddevice as sd
 
@@ -329,6 +332,19 @@ def device_index(name):
             return i
     default = sd.query_hostapis(mme)["default_input_device"]
     return default if default >= 0 else None
+
+
+def refresh_devices():
+    """Makes PortAudio read the devices again (it keeps the list from its start, so
+    a microphone connected later is missing). Only with no stream open or closing."""
+    try:
+        import sounddevice as sd
+
+        if sd._initialized:  # not after a failed _initialize()
+            sd._terminate()
+        sd._initialize()
+    except Exception as e:
+        log(f"could not read the audio devices again: {e}")
 
 
 def launch_command(background=False):
@@ -565,6 +581,13 @@ class Recorder:
         self.closer = threading.Thread(target=close, daemon=True, name="mic-close")
         self.closer.start()
 
+    def idle(self, wait_s=0.0):
+        """No stream open or closing (one that is closing is waited for up to wait_s)."""
+        c = self.closer
+        if c is not None:
+            c.join(wait_s)
+        return self.stream is None and (c is None or not c.is_alive())
+
     def _loop(self):
         ch, session, index = None, None, 0
 
@@ -689,7 +712,10 @@ class Overlay:
     def _tick(self):
         if self.visible:
             if self.hide_at and time.perf_counter() >= self.hide_at:
-                self.hide()
+                if self.app.recording:  # e.g. a message about an earlier dictation: back to this one
+                    self.show("recording")
+                else:
+                    self.hide()
             else:
                 if self.state == "recording":
                     self.levels = self.levels[1:] + [self.app.recorder.level]
@@ -1768,19 +1794,32 @@ class App:
         threading.Thread(target=run, daemon=True, name="download").start()
 
     # ---- settings ---------------------------------------------------------------
-    def _fill_mics(self):
+    def _fill_mics(self, wait_s=0.0):
+        """Fills the microphone list, read again from Windows when no stream is open or
+        closing (one closing is waited for up to wait_s). A saved microphone that is
+        missing is shown as not connected."""
+        rec = getattr(self, "recorder", None)  # none yet while the window is built
+        if rec is not None and not self.recording and rec.idle(wait_s):
+            refresh_devices()
         try:
             names = input_devices()
         except Exception:
             names = []
-        self.mic_box["values"] = ["System default"] + names
-        self.mic_var.set(self.settings["microphone"] or "System default")
+        mic, values = self.settings["microphone"], ["System default"] + names
+        if mic and mic not in names:  # device_index() uses the default instead
+            mic += NOT_CONNECTED
+            values.append(mic)
+            if hasattr(self, "footer"):  # not yet while the window is built
+                self.footer.configure(text=f"Microphone: {mic}.")
+        self.mic_box["values"] = values
+        self.mic_var.set(mic or "System default")
 
     def _changed(self):
         s = self.settings
         s["mode"], s["output"] = self.mode_var.get(), self.out_var.get()
         mic = self.mic_var.get()
-        s["microphone"] = "" if mic == "System default" else mic
+        if mic != s["microphone"] + NOT_CONNECTED:  # that one keeps the saved name
+            s["microphone"] = "" if mic == "System default" else mic
         for k, var in self.checks.items():
             s[k] = var.get()
         save_settings(s)
@@ -2032,6 +2071,7 @@ class App:
         self.sessions[self.session] = {"n": None, "parts": {}, "npu": 0.0, "t_stop": None, "seconds": 0.0,
                                        "target": None, "failed": False}
         try:
+            self._fill_mics(3.0)  # read the microphones again: one may have been connected or removed
             self.recorder.start(self.session, device_index(self.settings["microphone"]))
         except Exception as e:
             self._sound("error")
