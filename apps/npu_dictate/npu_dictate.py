@@ -18,7 +18,7 @@ import tkinter as tk
 import wave
 import winsound
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 
 import numpy as np
 
@@ -41,8 +41,6 @@ OUTPUTS = {"paste": "Paste (your clipboard is restored)", "type": "Type it as ke
            "clipboard": "Only copy to the clipboard"}
 STATES = {"loading": "Loading", "download": "Downloading", "waiting": "Waiting", "ready": "Ready",
           "unloaded": "Unloaded", "recording": "Recording", "error": "Stopped"}
-COLORS = {"loading": "#8e8e93", "download": "#8e8e93", "waiting": "#d9a400", "ready": "#30a14e",
-          "unloaded": "#8e8e93", "recording": "#e5484d", "error": "#e5484d"}
 WATCHDOG_S = 30.0  # NPU work (a piece, or the warm-up) must finish this soon
 START_TIMEOUT_S = 60.0  # the engine must reach the NPU this soon after it is spawned
 RETRY_S = (10, 30, 60, 120, 300)  # waits between attempts to load the model
@@ -51,6 +49,175 @@ S = 1.0  # display scale (DPI / 96), set when the window is created
 
 def px(v):
     return int(round(v * S))
+
+
+# -- theme -----------------------------------------------------------------------
+TOKENS = {
+    "light": {"bg": "#F3F4F6", "surface": "#FFFFFF", "ink": "#1B1F24", "muted": "#5E6670", "line": "#D9DDE3",
+              "accent": "#2F5BD3", "ready": "#1F8A4C", "recording": "#D93A3A", "waiting": "#B7791F",
+              "idle": "#7A828C", "error": "#D93A3A"},
+    "dark": {"bg": "#1C1E22", "surface": "#26292E", "ink": "#E8EAED", "muted": "#9AA1AA", "line": "#3A3E45",
+             "accent": "#7C9CF2", "ready": "#46C27A", "recording": "#FF5C5C", "waiting": "#E0A84A",
+             "idle": "#8D949D", "error": "#FF5C5C"},
+}
+STATE_TOKEN = {"loading": "idle", "download": "idle", "unloaded": "idle", "waiting": "waiting", "ready": "ready",
+               "recording": "recording", "error": "error"}
+COLORS = {k: TOKENS["light"][STATE_TOKEN[k]] for k in STATES}  # the tray icon
+FONT = {}  # "display" and "text" font families, set by pick_fonts()
+_SEMIBOLD = {}  # family -> its installed Semibold family (None if there is none)
+_IMAGES = {}  # images of the flat notebook elements: kept alive, recolored on a theme switch
+
+
+def blend(color, base, amount):
+    """`color` laid over `base` at `amount` (0..1), as "#rrggbb"."""
+    a, b = ([int(c[i:i + 2], 16) for i in (1, 3, 5)] for c in (color, base))
+    return "#" + "".join(f"{round(x * amount + y * (1 - amount)):02x}" for x, y in zip(a, b))
+
+
+def contrast(a, b):
+    """WCAG contrast ratio of two "#rrggbb" colors (1 to 21)."""
+    def lum(c):
+        v = [int(c[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        v = [x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4 for x in v]
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def on_accent(tok):
+    """Text on an accent fill: white where it is readable (light theme), else the window color (dark theme)."""
+    return "#FFFFFF" if contrast("#FFFFFF", tok["accent"]) >= 4.5 else tok["bg"]
+
+
+def pick_fonts(root):
+    """The first installed family of each kind (Bahnschrift and Segoe UI come with Windows 10 and 11)."""
+    have = {f.lower(): f for f in tkfont.families(root)}
+    for kind, names in (("display", ("Bahnschrift", "Segoe UI", "Helvetica")),
+                        ("text", ("Segoe UI Variable Text", "Segoe UI", "Helvetica"))):
+        FONT[kind] = next((have[n.lower()] for n in names if n.lower() in have), names[-1])
+        _SEMIBOLD[FONT[kind]] = have.get(f"{FONT[kind]} semibold".lower())
+
+
+def font(kind, size, semibold=False):
+    """A Tk font tuple, size in points. Semibold is the family's Semibold face if installed, else bold."""
+    family = FONT.get(kind, "Helvetica")
+    if not semibold:
+        return (family, size)
+    face = _SEMIBOLD.get(family)
+    return (face, size) if face else (family, size, "bold")
+
+
+def _flat_notebook_images(root, st, tok):
+    """Image elements of Flat.TNotebook: the tab (a 2 px accent underline when selected, then a gap to the
+    next tab) and the client area (a 1 px line along its top, under the tab row)."""
+    gap, under, rule = px(20), px(2), px(1)
+    if "Flat.Notebook.tab" not in st.element_names():
+        _IMAGES.update(tab=tk.PhotoImage(master=root, width=1 + gap, height=1 + under),
+                       tab_on=tk.PhotoImage(master=root, width=1 + gap, height=1 + under),
+                       rule=tk.PhotoImage(master=root, width=1, height=rule + 1))
+        st.element_create("Flat.Notebook.tab", "image", _IMAGES["tab"], ("selected", _IMAGES["tab_on"]),
+                          border=(0, 0, gap, under), sticky="nswe")
+        st.element_create("Flat.Notebook.client", "image", _IMAGES["rule"], border=(0, rule, 0, 0), sticky="nswe")
+    _IMAGES["tab_on"].blank()
+    _IMAGES["tab_on"].put(tok["accent"], to=(0, 1, 1, 1 + under))
+    _IMAGES["rule"].blank()
+    _IMAGES["rule"].put(tok["line"], to=(0, 0, 1, rule))
+
+
+def _recolor_lists(root, opts):
+    """Combobox lists that already exist (the option database reaches only new ones)."""
+    todo = ["."]
+    while todo:
+        for child in root.tk.splitlist(root.tk.call("winfo", "children", todo.pop())):
+            todo.append(str(child))
+            if str(child).endswith(".popdown.f.l"):
+                root.tk.call(child, "configure", *opts)
+
+
+def build_style(root, tok):
+    """The ttk styles for the theme colors, on clam (it looks the same on every Windows version).
+    Safe to call again when the theme changes: existing widgets follow."""
+    st = ttk.Style(root)
+    st.theme_use("clam")
+    bg, surface, ink, muted, line, accent = (tok[k] for k in ("bg", "surface", "ink", "muted", "line", "accent"))
+    on = on_accent(tok)
+    tk8 = tk.TkVersion < 9  # Tk 9 scales its element sizes itself; in Tk 8.6 they are pixels
+    text = font("text", 10)
+    focus = [("focus", accent)]
+
+    st.configure(".", background=bg, foreground=ink, bordercolor=line, lightcolor=bg, darkcolor=bg, troughcolor=line,
+                 fieldbackground=surface, selectbackground=accent, selectforeground=on, insertcolor=ink,
+                 arrowcolor=ink, focuscolor=accent, focusthickness=1, focussolid=1, font=text)
+    st.map(".", background=[], foreground=[("disabled", muted)], selectbackground=[], selectforeground=[])
+
+    st.configure("TFrame", background=bg)
+    st.configure("Surface.TFrame", background=surface)
+    st.configure("Divider.TFrame", background=line, borderwidth=0, relief="flat")
+    st.configure("TLabel", background=bg, foreground=ink, font=text)
+    st.configure("Surface.TLabel", background=surface, foreground=ink)
+    st.configure("Title.TLabel", foreground=ink, font=font("display", 20, True))
+    st.configure("Group.TLabel", foreground=muted, font=font("text", 10, True))
+    st.configure("Muted.TLabel", foreground=muted, font=font("text", 9))
+
+    st.configure("TCheckbutton", background=bg, foreground=ink, font=text, padding=(0, px(2)),
+                 indicatorbackground=surface, indicatorforeground=on, upperbordercolor=muted, lowerbordercolor=muted,
+                 indicatormargin=(0, 0, px(8), 0), indicatorsize=px(14))
+    st.map("TCheckbutton", background=[("", bg)], foreground=[("disabled", muted)], indicatorforeground=[("", on)],
+           indicatorbackground=[("disabled", bg), ("selected", accent), ("", surface)],
+           upperbordercolor=[("focus", accent), ("selected", accent)],
+           lowerbordercolor=[("focus", accent), ("selected", accent)])
+
+    # Combobox and spinbox: surface field, line border, a 2 px accent border with the keyboard focus.
+    for name in ("TCombobox", "TSpinbox"):
+        st.configure(name, fieldbackground=surface, background=surface, foreground=ink, bordercolor=line,
+                     lightcolor=surface, darkcolor=surface, arrowcolor=ink, insertcolor=ink, insertwidth=px(1),
+                     padding=(px(8), px(4)))
+        st.map(name, fieldbackground=[("disabled", bg), ("", surface)], foreground=[("disabled", muted), ("", ink)],
+               background=[("disabled", bg), ("pressed", line), ("", surface)], arrowcolor=[("disabled", muted)],
+               bordercolor=focus, lightcolor=focus, darkcolor=focus)
+    st.configure("TCombobox", selectbackground=surface, selectforeground=ink)  # read-only: focus shows on the border
+    st.map("TCombobox", selectbackground=[("", surface)], selectforeground=[("", ink)])
+    st.configure("TSpinbox", padding=(px(8), px(4), px(4), px(4)))
+    if tk8:
+        st.configure("TCombobox", arrowsize=px(14))
+        st.configure("TSpinbox", arrowsize=px(10))
+    st.configure("ComboboxPopdownFrame", background=surface, bordercolor=line, lightcolor=line, darkcolor=line,
+                 relief="solid", borderwidth=1)
+    lst = (("background", surface), ("foreground", ink), ("selectBackground", accent), ("selectForeground", on),
+           ("font", text), ("borderWidth", 0), ("highlightThickness", 0), ("activeStyle", "none"))
+    for k, v in lst:
+        root.option_add(f"*TCombobox*Listbox.{k}", v)
+    _recolor_lists(root, [x for k, v in lst for x in (f"-{k.lower()}", v)])
+
+    # Thin progress bar: accent on a line-colored track (arrowsize is the bar's thickness; Tk 9 scales it).
+    st.configure("Horizontal.TProgressbar", background=accent, lightcolor=accent, darkcolor=accent, bordercolor=line,
+                 troughcolor=line, arrowsize=px(6) if tk8 else 6)
+
+    # Quiet scrollbar for surface panels: no arrows, a line-colored thumb that darkens on hover. The Page
+    # variant has its track on the window background (the Settings tab).
+    st.layout("Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+        ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+    st.configure("Vertical.TScrollbar", troughcolor=surface, bordercolor=surface, background=line, lightcolor=line,
+                 darkcolor=line, gripcount=0, gripsize=0, arrowpadding=0,
+                 arrowsize=px(10) if tk8 else 4)  # 10 px wide (Tk 9: 2 * 4 + 1, scaled by Tk)
+    thumb = [("pressed", muted), ("active", muted), ("", line)]
+    st.map("Vertical.TScrollbar", background=thumb, lightcolor=thumb, darkcolor=thumb)
+    st.configure("Page.Vertical.TScrollbar", troughcolor=bg, bordercolor=bg)
+
+    # Flat notebook: text tabs, the selected one in ink over a 2 px accent underline, the others muted; a 1 px
+    # line runs under the whole tab row (do not add another divider there). No tab or client border box.
+    _flat_notebook_images(root, st, tok)
+    st.configure("Flat.TNotebook", background=bg, borderwidth=0, padding=0, tabmargins=0, tabposition="nw")
+    st.layout("Flat.TNotebook", [("Flat.Notebook.client", {"sticky": "nswe"})])
+    tab_pad = (0, px(4), 0, px(6))
+    st.configure("Flat.TNotebook.Tab", background=bg, foreground=muted, font=text, padding=tab_pad)
+    st.map("Flat.TNotebook.Tab", foreground=[("selected", ink), ("active", ink), ("", muted)],
+           background=[("", bg)], padding=[("", tab_pad)], expand=[("", 0)])
+    st.layout("Flat.TNotebook.Tab", [("Flat.Notebook.tab", {"sticky": "nswe", "children": [
+        ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
+            ("Notebook.focus", {"side": "top", "sticky": "nswe", "children": [
+                ("Notebook.label", {"side": "top", "sticky": ""})]})]})]})])
 
 
 # -- settings, sounds, icon ------------------------------------------------------
@@ -450,6 +617,17 @@ class Overlay:
         self.win.attributes("-transparentcolor", self.KEY)
         self.c = tk.Canvas(self.win, width=self.W, height=self.H, bg=self.KEY, highlightthickness=0)
         self.c.pack()
+        d = TOKENS["dark"]  # the indicator is dark in both themes
+        self.fill, self.ink, self.border, self.rec = d["surface"], d["ink"], d["line"], d["recording"]
+        self.bar = blend(d["recording"], d["surface"], 0.7)
+        self.dots = {"busy": d["waiting"], "done": d["ready"], "info": d["idle"], "error": d["error"]}
+        # The timer is in the display font after "Listening": both sit on one baseline
+        # (font metrics are in pixels, the drawing in 96-DPI units).
+        self.f_text, self.f_time = font("text", 10), font("display", 11)
+        ft, fm = tkfont.Font(root=self.win, font=self.f_text), tkfont.Font(root=self.win, font=self.f_time)
+        a, dt = ft.metrics("ascent") / S, ft.metrics("descent") / S
+        self.time_x = 38 + ft.measure("Listening") / S + 8
+        self.time_y = self.BH / 2 + (a - dt) / 2 + fm.metrics("descent") / S  # bottom of the timer's line
         self.win.update_idletasks()
         self.hwnd = win32.toplevel_hwnd(self.win)
         win32.make_overlay(self.hwnd)
@@ -486,31 +664,34 @@ class Overlay:
                 self._draw()
         self.app.root.after(50, self._tick)
 
-    def _pill(self, fill):
-        w, h, r = self.BW, self.BH, self.BH // 2
-        c = self.c
-        c.create_oval(0, 0, 2 * r, h - 1, fill=fill, outline=fill)
-        c.create_oval(w - 2 * r - 1, 0, w - 1, h - 1, fill=fill, outline=fill)
-        c.create_rectangle(r, 0, w - r, h - 1, fill=fill, outline=fill)
+    def _pill(self, fill, border=None):
+        """The pill shape, with a 1-unit border when given (a filled pill inside a larger one)."""
+        c, w, h = self.c, self.BW, self.BH
+        for i, color in ((0, border), (1, fill)) if border else ((0, fill),):
+            x0, y0, x1, y1 = i, i, w - 1 - i, h - 1 - i
+            r = (y1 - y0) / 2
+            c.create_oval(x0, y0, x0 + 2 * r, y1, fill=color, outline=color)
+            c.create_oval(x1 - 2 * r, y0, x1, y1, fill=color, outline=color)
+            c.create_rectangle(x0 + r, y0, x1 - r, y1, fill=color, outline=color)
 
     def _draw(self):
         c, h = self.c, self.BH
         c.delete("all")
-        self._pill("#1c1c1f")
+        self._pill(self.fill, self.border)
         t = time.perf_counter() - self.t0
-        font = ("Segoe UI", 10)
         if self.state == "recording":
             rad = 5 + 1.5 * abs(np.sin(3 * t))
-            c.create_oval(22 - rad, h / 2 - rad, 22 + rad, h / 2 + rad, fill="#ff453a", outline="")
+            c.create_oval(22 - rad, h / 2 - rad, 22 + rad, h / 2 + rad, fill=self.rec, outline="")
+            c.create_text(38, h / 2, text="Listening", fill=self.ink, font=self.f_text, anchor="w")
             secs = int(self.app.recorder.seconds)
-            c.create_text(38, h / 2, text=f"Listening  {secs // 60}:{secs % 60:02d}", fill="white",
-                          font=font, anchor="w")
+            c.create_text(self.time_x, self.time_y, text=f"{secs // 60}:{secs % 60:02d}", fill=self.ink,
+                          font=self.f_time, anchor="sw")
             for i, lv in enumerate(self.levels):
                 bh = 3 + min(22, 22 * (lv / 0.06) ** 0.6)
                 x = 150 + i * 6
-                c.create_rectangle(x, h / 2 - bh / 2, x + 3, h / 2 + bh / 2, fill="#ff9f9a", outline="")
+                c.create_rectangle(x, h / 2 - bh / 2, x + 3, h / 2 + bh / 2, fill=self.bar, outline="")
         else:
-            color = {"busy": "#ffd60a", "done": "#30d158", "info": "#8e8e93", "error": "#ff453a"}[self.state]
+            color = self.dots[self.state]
             if self.state == "busy":
                 for i in range(3):
                     a = 0.5 + 0.5 * np.sin(6 * t - i)
@@ -519,8 +700,582 @@ class Overlay:
             else:
                 c.create_oval(17, h / 2 - 5, 27, h / 2 + 5, fill=color, outline="")
                 label = self.text
-            c.create_text(44, h / 2, text=label, fill="white", font=font, anchor="w", width=px(self.BW - 60))
+            c.create_text(44, h / 2, text=label, fill=self.ink, font=self.f_text, anchor="w",
+                          width=px(self.BW - 60))
         c.scale("all", 0, 0, S, S)
+
+
+# -- UI components ---------------------------------------------------------------
+# Each one adds itself to app.themed and recolors in apply_theme(tok).
+def text_width(widget, fnt, text):
+    """Width of text in a Tk font, in pixels."""
+    return int(widget.tk.call("font", "measure", fnt, text))
+
+
+def line_height(widget, fnt):
+    return int(widget.tk.call("font", "metrics", fnt, "-linespace"))
+
+
+def round_rect(c, x0, y0, x1, y1, r, **kw):
+    """A rectangle with rounded corners of radius r on Canvas c (a smoothed polygon)."""
+    r = max(0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+    pts = (x0 + r, y0, x0 + r, y0, x1 - r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y0 + r, x1, y1 - r,
+           x1, y1 - r, x1, y1, x1 - r, y1, x1 - r, y1, x0 + r, y1, x0 + r, y1, x0, y1, x0, y1 - r,
+           x0, y1 - r, x0, y0 + r, x0, y0 + r, x0, y0)
+    return c.create_polygon(pts, smooth=True, **kw)
+
+
+class LinkButton(tk.Label):
+    """A text link: accent text, underlined under the mouse. A click, Return or
+    Space runs command; keyboard focus shows an accent outline."""
+
+    def __init__(self, parent, app, text, command, bg="bg"):
+        self.app, self.command, self.bg_token = app, command, bg
+        self.fonts = (font("text", 10), tuple(font("text", 10)) + ("underline",))
+        super().__init__(parent, text=text, font=self.fonts[0], cursor="hand2", takefocus=1, bd=0,
+                         padx=px(2), pady=px(1), highlightthickness=px(1), anchor="w", justify="left")
+        self.bind("<Enter>", lambda e: self.configure(font=self.fonts[1]))
+        self.bind("<Leave>", lambda e: self.configure(font=self.fonts[0]))
+        self.bind("<Button-1>", lambda e: self.command())
+        for seq in ("<Return>", "<KP_Enter>", "<space>"):
+            self.bind(seq, self._key)
+        app.themed.append(self)
+        self.apply_theme(app.tok)
+
+    def _key(self, event):
+        # While a new shortcut is captured its keys are not a click. No "break":
+        # the capture binding on the window must still see the key.
+        if not self.app.capturing:
+            self.command()
+
+    def apply_theme(self, tok):
+        bg = tok[self.bg_token]
+        self.configure(fg=tok["accent"], bg=bg, activeforeground=tok["accent"], activebackground=bg,
+                       highlightcolor=tok["accent"], highlightbackground=bg)
+
+
+class StatusPill(tk.Canvas):
+    """The state as a pill: a dot in the state color and the state's name."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent, width=1, height=1, bd=0, highlightthickness=0, takefocus=0, bg=app.tok["bg"])
+        self.app, self.state, self.shown = app, None, (1, 1)
+        app.themed.append(self)
+
+    def set(self, state):
+        if state != self.state:
+            self.state = state
+            self._draw()
+
+    def apply_theme(self, tok):
+        self.configure(bg=tok["bg"])
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        if self.state is None:
+            return
+        tok = self.app.tok
+        color, text, f = tok[STATE_TOKEN[self.state]], STATES[self.state], font("text", 10, semibold=True)
+        d, pad = px(8), px(10)
+        h = max(px(26), line_height(self, f) + px(8))
+        w = pad + d + px(6) + text_width(self, f, text) + px(12)
+        if self.shown != (w, h):
+            self.shown = (w, h)
+            self.configure(width=w, height=h)
+        round_rect(self, 0, 0, w - 1, h - 1, (h - 1) / 2, fill=blend(color, tok["surface"], 0.14),
+                   outline=blend(color, tok["surface"], 0.4))
+        y = (h - d) // 2
+        self.create_oval(pad, y, pad + d - 1, y + d - 1, fill=color, outline=color)
+        self.create_text(pad + d + px(6), h / 2, text=text, anchor="w", fill=tok["ink"], font=f)
+
+
+# Ways to fit the keys, tried in order until they fit: label size (pt), padding,
+# minimum key width, space each side of "+", narrowest Space (0: its text).
+KEY_FITS = ((14, 28, 64, 8, 168), (14, 28, 64, 6, 96), (14, 28, 64, 6, 0), (14, 28, 0, 6, 0),
+            (14, 16, 0, 4, 0), (12, 14, 0, 4, 0), (11, 12, 0, 3, 0), (10, 10, 0, 2, 0))
+
+
+class KeycapHero(ttk.Frame):
+    """The shortcut drawn as keycaps (pressed while recording), with a "Change
+    shortcut" link to their right, or below them when both do not fit."""
+
+    H, EDGE, R, SPACE, GAP = 44, 3, 6, 168, 20  # 96-DPI units
+    CAPTURE = "Press the new shortcut (Esc cancels)"
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self.canvas = tk.Canvas(self, width=1, height=px(self.H + self.EDGE), bd=0, highlightthickness=0,
+                                takefocus=0, bg=app.tok["bg"])
+        self.canvas.grid(row=0, column=0, sticky="w")
+        self.link = LinkButton(self, app, "Change shortcut", app._capture_shortcut)
+        self.columnconfigure(1, weight=1)
+        self.parts, self.mode, self.base = None, None, "normal"  # base: the look when not pressed
+        self.p = 0.0  # how far the keys are drawn pressed (0 up, 1 down)
+        self.step = None  # the pending animation frame
+        self.width, self.shown, self.link_right = 0, None, None
+        self.bind("<Configure>", self._resized)
+        app.themed.append(self)
+
+    def set(self, parts, mode):
+        """parts: the key labels; mode: normal, pressed, muted, error or capturing."""
+        parts = list(parts)
+        if parts == self.parts and mode == self.mode:
+            return
+        if self.step is not None:
+            self.after_cancel(self.step)
+            self.step = None
+        animate = parts == self.parts and "capturing" not in (mode, self.mode)
+        self.parts, self.mode = parts, mode
+        if mode not in ("pressed", "capturing"):
+            self.base = mode
+        target = 1.0 if mode == "pressed" else 0.0
+        if animate and self.p != target:  # one frame half way, the last one 90 ms later
+            self._draw((self.p + target) / 2)
+            self.step = self.after(90, self._settle)
+        else:
+            self._draw(target)
+
+    def _settle(self):
+        self.step = None
+        self._draw(1.0 if self.mode == "pressed" else 0.0)
+
+    def apply_theme(self, tok):
+        self.canvas.configure(bg=tok["bg"])
+        if self.step is not None:
+            self.after_cancel(self.step)
+            self.step = None
+        if self.parts is not None:
+            self._draw(1.0 if self.mode == "pressed" else 0.0)
+
+    def _resized(self, event):
+        if event.width != self.width:
+            self.width = event.width
+            if self.parts is not None:
+                self._draw(self.p)
+
+    def _fit(self, avail, fits):
+        """(key widths, "+" width, key font, "+" font) of the first way in fits that
+        is at most avail wide, else of the last one; and whether it fits."""
+        for size, pad, low, gap, space in fits:
+            f, fp = font("display", size, semibold=True), font("display", size)
+            widths = [max(px(low), text_width(self, f, k) + px(pad)) for k in self.parts]
+            sep = text_width(self, fp, "+") + 2 * px(gap)
+            if "Space" in self.parts:  # Space is wide, narrower when the room runs out
+                i = self.parts.index("Space")
+                room = avail - sum(widths) - sep * (len(widths) - 1) + widths[i]
+                widths[i] = max(widths[i], px(space), min(px(self.SPACE), room))
+            if sum(widths) + sep * (len(widths) - 1) <= avail:
+                return (widths, sep, f, fp), True
+        return (widths, sep, f, fp), False
+
+    def _draw(self, p):
+        self.p = p
+        c, tok = self.canvas, self.app.tok
+        c.delete("all")
+        avail = self.width if self.width > 1 else px(480)  # before the first layout: the default window
+        beside = avail - px(self.GAP) - self.link.winfo_reqwidth()
+        H, E, r = px(self.H), px(self.EDGE), px(self.R)
+        if self.mode == "capturing":
+            f = font("text", 10)
+            w = text_width(self, f, self.CAPTURE) + px(28)
+            right = w <= beside
+            w = min(w, avail)  # wraps to two lines if it must
+            round_rect(c, 0, 0, w - 1, H - 1, r, fill=tok["bg"], outline=tok["accent"], dash=(px(4), px(3)))
+            c.create_text(w / 2, H / 2, text=self.CAPTURE, fill=tok["ink"], font=f, width=w - px(16),
+                          justify="center")
+        else:
+            (widths, sep, f, fp), right = self._fit(beside, KEY_FITS[:2])
+            if not right:
+                (widths, sep, f, fp), _ = self._fit(avail, KEY_FITS)
+            off = round(min(px(2), E - px(1)) * p)  # pressed: the face moves down, the edge shrinks
+            border = tok["error"] if self.base == "error" else tok["line"]
+            ink = tok["muted"] if self.base == "muted" else tok["ink"]
+            face = blend(tok["recording"], tok["surface"], 0.18 * p)
+            border, ink = blend(tok["recording"], border, p), blend(tok["ink"], ink, p)
+            w = 0
+            for i, (k, kw) in enumerate(zip(self.parts, widths)):
+                if i:
+                    c.create_text(w + sep / 2, H / 2, text="+", fill=tok["muted"], font=fp)
+                    w += sep
+                round_rect(c, w, E, w + kw - 1, H + E - 1, r, fill=tok["line"], outline=tok["line"])
+                round_rect(c, w, off, w + kw - 1, off + H - 1, r, fill=face, outline=border)
+                c.create_text(w + kw / 2, off + H / 2, text=k, fill=ink, font=f)
+                w += kw
+        if self.shown != (w, H + E):
+            self.shown = (w, H + E)
+            c.configure(width=w, height=H + E)
+        if right != self.link_right:
+            self.link_right = right
+            if right:
+                self.link.grid(row=0, column=1, columnspan=1, sticky="w", padx=(px(self.GAP), 0), pady=(0, E))
+            else:
+                self.link.grid(row=1, column=0, columnspan=2, sticky="w", padx=0, pady=(px(8), 0))
+
+
+class Segmented(tk.Frame):
+    """Joined buttons that choose one value of a tk variable. The selected one is
+    filled with the accent color; Left and Right move the choice; the border turns
+    accent while one of the buttons has keyboard focus."""
+
+    def __init__(self, parent, app, variable, options, command):
+        super().__init__(parent, bd=0, padx=px(1), pady=px(1), highlightthickness=0)
+        self.app, self.var, self.hover, self.focused = app, variable, None, None
+        self.buttons = []
+        for i, (value, label) in enumerate(options):
+            b = tk.Radiobutton(self, text=label, value=value, variable=variable, command=command,
+                               indicatoron=False, bd=0, relief="flat", offrelief="flat", overrelief="flat",
+                               padx=px(10), pady=px(4), highlightthickness=px(1), takefocus=1,
+                               font=font("text", 10))
+            b.pack(side="left", fill="y", padx=(px(1) if i else 0, 0))
+            b.bind("<Enter>", lambda e, i=i: self._hover(i), add="+")
+            b.bind("<Leave>", lambda e: self._hover(None), add="+")
+            b.bind("<FocusIn>", lambda e, i=i: self._focus(i), add="+")
+            b.bind("<FocusOut>", lambda e: self._focus(None), add="+")
+            b.bind("<Left>", lambda e, i=i: self._step(i - 1))
+            b.bind("<Right>", lambda e, i=i: self._step(i + 1))
+            self.buttons.append(b)
+        variable.trace_add("write", lambda *a: self._paint())
+        app.themed.append(self)
+        self.apply_theme(app.tok)
+
+    def _hover(self, i):
+        self.hover = i
+        self._paint()
+
+    def _focus(self, i):
+        self.focused = i
+        self._paint()
+
+    def _step(self, i):
+        if self.app.capturing:  # the arrow may be part of a new shortcut: no "break"
+            return None
+        if 0 <= i < len(self.buttons):
+            self.buttons[i].focus_set()
+            self.buttons[i].invoke()
+        return "break"
+
+    def apply_theme(self, tok):
+        self.tok = tok
+        self._paint()
+
+    def _paint(self):
+        # Every color is set here (not left to Tk's active and select colors): Tk on
+        # Windows shows no hover on radio buttons and swaps selectcolor on a click.
+        tok = self.tok
+        self.configure(bg=tok["accent"] if self.focused is not None else tok["line"])
+        for i, b in enumerate(self.buttons):
+            on = self.var.get() == str(b.cget("value"))
+            fill = tok["accent"] if on else tok["line"] if i == self.hover else tok["surface"]
+            fg = on_accent(tok) if on else tok["ink"]
+            b.configure(bg=fill, activebackground=fill, selectcolor=fill, fg=fg, activeforeground=fg,
+                        highlightbackground=fill, highlightcolor=tok["surface"] if on else tok["accent"])
+
+
+class ScrollFrame(ttk.Frame):
+    """A vertically scrolling area on the window background: put widgets in .inner.
+    The scrollbar shows only when the content is taller than the area; the mouse
+    wheel scrolls it over any widget in it, and a widget that gets keyboard focus
+    is scrolled into view. on_width(width) is called when the width changes."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.scrolls, self.wheel, self.on_width = False, 0.0, None
+        self.canvas = tk.Canvas(self, width=px(380), height=px(160), bd=0, highlightthickness=0,
+                                yscrollincrement=px(8), takefocus=0)
+        self.bar = ttk.Scrollbar(self, orient="vertical", style="Page.Vertical.TScrollbar",
+                                 command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.bar.set)
+        self.inner = ttk.Frame(self.canvas)
+        self.item = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.canvas.bind("<Configure>", self._resized)
+        self.inner.bind("<Configure>", lambda e: self._update())
+        self.tag = f"ScrollFrame{id(self)}"
+        app.themed.append(self)
+        self.apply_theme(app.tok)
+
+    def apply_theme(self, tok):
+        self.canvas.configure(bg=tok["bg"])
+
+    def bind_wheel(self):
+        """Call once the area is filled: binds the wheel and focus on every widget in it."""
+        todo = [self]
+        while todo:
+            w = todo.pop()
+            todo.extend(w.winfo_children())
+            if self.tag not in w.bindtags():
+                w.bindtags((self.tag,) + w.bindtags())
+        seqs = ["<MouseWheel>"]
+        if self.tk.call("tk", "windowingsystem") == "x11":  # on Windows Button-4/5 are the side buttons
+            seqs += ["<Button-4>", "<Button-5>"]
+        for seq in seqs:
+            self.bind_class(self.tag, seq, self._wheel)
+        self.bind_class(self.tag, "<FocusIn>", self._focused)
+
+    def _resized(self, e):
+        self.canvas.itemconfigure(self.item, width=e.width)
+        if self.on_width:
+            self.on_width(e.width)
+        self._update()
+
+    def _update(self):
+        h, view = self.inner.winfo_reqheight(), self.canvas.winfo_height()
+        if (h > view) != self.scrolls:
+            self.scrolls = h > view
+            if self.scrolls:
+                self.bar.grid(row=0, column=1, sticky="ns", padx=(px(6), 0))
+            else:
+                self.bar.grid_remove()
+        self.canvas.configure(scrollregion=(0, 0, self.canvas.winfo_width(), max(h, view)))
+        if not self.scrolls:
+            self.canvas.yview_moveto(0)
+
+    def _wheel(self, e):
+        if not self.scrolls:
+            return None  # a combobox or spin box under the mouse handles the wheel as before
+        self.wheel += 6 * (-1 if e.num == 4 else 1 if e.num == 5 else -e.delta / 120)  # 48 px a notch
+        n = int(self.wheel)
+        if n:
+            self.wheel -= n
+            self.canvas.yview_scroll(n, "units")
+        return "break"  # the page scrolls, no value under the mouse changes
+
+    def _focused(self, e):
+        if not self.scrolls or str(e.widget) != str(self.tk.call("focus")):
+            return
+        try:
+            y = e.widget.winfo_rooty() - self.inner.winfo_rooty()
+            h = e.widget.winfo_height()
+        except (AttributeError, tk.TclError):
+            return
+        top, view, total = self.canvas.canvasy(0), self.canvas.winfo_height(), self.inner.winfo_reqheight()
+        if y < top:
+            self.canvas.yview_moveto(max(0, y - px(8)) / total)
+        elif y + h > top + view:
+            self.canvas.yview_moveto((y + h + px(8) - view) / total)
+
+
+class HistoryList(tk.Frame):
+    """The History tab: dictations newest first, the time above the text, 1 px
+    dividers between them, all drawn on one Canvas (so the text wraps and the
+    flash fills the whole entry). A click, or Return on the keyboard row, calls
+    on_click(index) with 0 = the newest entry."""
+
+    PADX, PADY, GAP = 12, 10, 2  # 96-DPI units
+    WHEEL, ARROW = 48, 20  # pixels per wheel notch and per scrollbar arrow click
+
+    def __init__(self, parent, app, on_click):
+        super().__init__(parent, bd=0, highlightthickness=px(1))
+        self.app, self.on_click = app, on_click
+        self.items, self.key, self.rows = [], None, []
+        self.width = self.content = self.total = 0
+        self.cursor, self.focused = 0, False  # keyboard row
+        self.flashing, self.flash_job = None, None
+        self.sb_shown = False
+        self.c = c = tk.Canvas(self, bd=0, highlightthickness=0, takefocus=0, yscrollincrement=1,
+                               yscrollcommand=self._scrolled)
+        self.sb = ttk.Scrollbar(self, orient="vertical", style="Vertical.TScrollbar", command=self._yview)
+        c.grid(row=0, column=0, sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        wheel = ["<MouseWheel>"] + (["<Button-4>", "<Button-5>"] if c.tk.call("tk", "windowingsystem") == "x11" else [])
+        for w in (self, c, self.sb):
+            for seq in wheel:
+                w.bind(seq, self._wheel)
+        c.bind("<Configure>", self._configured)
+        c.bind("<Button-1>", self._clicked)
+        c.bind("<Motion>", self._hover)
+        c.bind("<Leave>", lambda e: c.configure(cursor=""))
+        c.bind("<FocusIn>", lambda e: self._focus(True))
+        c.bind("<FocusOut>", lambda e: self._focus(False))
+        for seq, fn in (("<Up>", lambda: self._move(self.cursor - 1)), ("<Down>", lambda: self._move(self.cursor + 1)),
+                        ("<Home>", lambda: self._move(0)), ("<End>", lambda: self._move(len(self.items) - 1)),
+                        ("<Prior>", lambda: c.yview_scroll(-1, "pages")),
+                        ("<Next>", lambda: c.yview_scroll(1, "pages")),
+                        ("<Return>", self._activate), ("<KP_Enter>", self._activate), ("<space>", self._activate)):
+            c.bind(seq, lambda e, fn=fn: self._key(fn))
+        app.themed.append(self)
+        self.apply_theme(app.tok)
+
+    def set_items(self, items, empty_text):
+        """items: [{"time", "text"}, ...] newest first. Does nothing when neither the
+        items nor the empty text changed, so it can be called from every _refresh."""
+        key = ([(d["time"], d["text"]) for d in items], empty_text)
+        if key == self.key:
+            return
+        self.key = key
+        self.items = [{"time": t, "text": x} for t, x in key[0]]
+        self._end_flash()
+        tok, c = self.app.tok, self.c
+        c.delete("all")
+        if not self.items:
+            c.create_text(0, 0, text=empty_text, anchor="nw", justify="left", fill=tok["muted"],
+                          font=font("text", 10), tags=("empty",))
+        for i, d in enumerate(self.items):
+            c.create_rectangle(0, 0, 0, 0, fill=tok["surface"], outline="", tags=("bg", f"bg{i}"))
+            c.create_text(0, 0, text=d["time"], anchor="nw", fill=tok["muted"], font=font("text", 9),
+                          tags=("time", f"t{i}"))
+            c.create_text(0, 0, text=d["text"], anchor="nw", justify="left", fill=tok["ink"], font=font("text", 10),
+                          tags=("body", f"x{i}"))
+            if i < len(self.items) - 1:
+                c.create_rectangle(0, 0, 0, 0, fill=tok["line"], outline="", tags=("div", f"d{i}"))
+        c.create_rectangle(0, 0, 0, 0, outline=tok["accent"], width=px(1), state="hidden", tags=("focus",))
+        c.configure(takefocus=1 if self.items else 0)
+        self.cursor = 0
+        self._layout()
+        c.yview_moveto(0)
+
+    def flash(self, index):
+        """The entry fills with accent at 18% for 400 ms (it was just copied)."""
+        if not 0 <= index < len(self.items):
+            return
+        self._end_flash()
+        self.flashing = index
+        self.c.itemconfigure(f"bg{index}", fill=blend(self.app.tok["accent"], self.app.tok["surface"], 0.18))
+        self.flash_job = self.after(400, self._end_flash)
+
+    def apply_theme(self, tok):
+        self.configure(bg=tok["surface"], highlightcolor=tok["accent"],
+                       highlightbackground=tok["accent"] if self.focused else tok["line"])
+        c = self.c
+        c.configure(bg=tok["surface"])
+        for tag, opt, key in (("bg", "fill", "surface"), ("time", "fill", "muted"), ("body", "fill", "ink"),
+                              ("div", "fill", "line"), ("empty", "fill", "muted"), ("focus", "outline", "accent")):
+            c.itemconfigure(tag, **{opt: tok[key]})
+        if self.flashing is not None:
+            c.itemconfigure(f"bg{self.flashing}", fill=blend(tok["accent"], tok["surface"], 0.18))
+
+    def _height(self, tag):
+        b = self.c.bbox(tag)
+        return b[3] - b[1] if b else 0
+
+    def _layout(self):
+        """Places every entry for the current width (the text wraps to it)."""
+        c = self.c
+        w = self.width = max(c.winfo_width(), px(120))
+        padx, pady, gap = px(self.PADX), px(self.PADY), px(self.GAP)
+        self.rows, y = [], 0
+        if not self.items:
+            c.itemconfigure("empty", width=w - 2 * padx)
+            c.coords("empty", padx, pady + gap)
+            y = 2 * (pady + gap) + self._height("empty")
+        for i in range(len(self.items)):
+            top = y
+            c.coords(f"t{i}", padx, top + pady)
+            y = top + pady + self._height(f"t{i}") + gap
+            c.itemconfigure(f"x{i}", width=w - 2 * padx)
+            c.coords(f"x{i}", padx, y)
+            y += self._height(f"x{i}") + pady
+            c.coords(f"bg{i}", 0, top, w, y)
+            self.rows.append((top, y))
+            if i < len(self.items) - 1:
+                c.coords(f"d{i}", 0, y, w, y + px(1))
+                y += px(1)
+        self.content = y
+        self._region()
+        self._draw_focus()
+
+    def _region(self):
+        self.total = max(self.content, self.c.winfo_height(), 1)
+        self.c.configure(scrollregion=(0, 0, self.width, self.total))
+
+    def _configured(self, event):
+        if event.width != self.width:
+            self._layout()
+        else:
+            self._region()
+
+    def _scrolled(self, first, last):
+        """The scrollbar shows only while the list is longer than the view."""
+        self.sb.set(first, last)
+        need = float(first) > 0.0001 or float(last) < 0.9999
+        if need != self.sb_shown:
+            self.sb_shown = need
+            if need:
+                self.sb.grid(row=0, column=1, sticky="ns")
+            else:
+                self.sb.grid_remove()
+
+    def _yview(self, *args):
+        if len(args) == 3 and args[2] == "units":  # an arrow: the canvas scrolls in pixels
+            self.c.yview_scroll(int(args[1]) * px(self.ARROW), "units")
+        else:
+            self.c.yview(*args)
+
+    def _wheel(self, event):
+        delta = {4: 120, 5: -120}.get(event.num, event.delta)  # Windows: 120 per notch
+        self.c.yview_scroll(int(round(-delta / 120 * px(self.WHEEL))), "units")
+        return "break"
+
+    def _index_at(self, y):
+        y = self.c.canvasy(y)
+        for i, (top, bottom) in enumerate(self.rows):
+            if top <= y < bottom + px(1):
+                return i
+        return None
+
+    def _clicked(self, event):
+        i = self._index_at(event.y)
+        if i is not None:
+            self.cursor = i
+            self._draw_focus()
+            self.on_click(i)
+
+    def _hover(self, event):
+        cursor = "hand2" if self._index_at(event.y) is not None else ""
+        if self.c.cget("cursor") != cursor:
+            self.c.configure(cursor=cursor)
+
+    def _focus(self, on):
+        self.focused = on
+        self.configure(highlightbackground=self.app.tok["accent" if on else "line"])
+        self._draw_focus()
+
+    def _draw_focus(self):
+        """A 1 px accent outline on the keyboard row while the list has focus."""
+        c = self.c
+        if self.focused and self.cursor < len(self.rows):
+            top, bottom = self.rows[self.cursor]
+            o = px(1)
+            c.coords("focus", o, top + o, self.width - o, bottom - o)
+            c.itemconfigure("focus", state="normal")
+            c.tag_raise("focus")
+        else:
+            c.itemconfigure("focus", state="hidden")
+
+    def _key(self, fn):
+        if self.app.capturing:
+            return None  # the shortcut capture on the window gets the key
+        fn()
+        return "break"
+
+    def _move(self, i):
+        if not self.rows:
+            return
+        self.cursor = max(0, min(len(self.rows) - 1, i))
+        self._draw_focus()
+        top, bottom = self.rows[self.cursor]
+        view, h = self.c.canvasy(0), self.c.winfo_height()
+        if top < view:
+            self.c.yview_moveto(top / self.total)
+        elif bottom > view + h:
+            self.c.yview_moveto((bottom - h) / self.total)
+
+    def _activate(self):
+        if self.cursor < len(self.items):
+            self.on_click(self.cursor)
+
+    def _end_flash(self):
+        if self.flash_job is not None:
+            self.after_cancel(self.flash_job)
+            self.flash_job = None
+        if self.flashing is not None:
+            self.c.itemconfigure(f"bg{self.flashing}", fill=self.app.tok["surface"])
+            self.flashing = None
 
 
 # -- the app ---------------------------------------------------------------------
@@ -551,7 +1306,7 @@ class App:
         self.history = []
         self.sounds = make_sounds()
         self.icon_path = APPDIR / "icon.ico"
-        icon_image("#30a14e", 256).save(self.icon_path, sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
+        icon_image(COLORS["ready"], 256).save(self.icon_path, sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
         if FROZEN:
             try:
                 if not self.settings["autostart_set"]:  # first start of the packaged app: on by default
@@ -569,10 +1324,11 @@ class App:
         S = self.root.winfo_fpixels("1i") / 96
         self.root.title(APP)
         self.root.iconbitmap(default=str(self.icon_path))
-        self.root.geometry(f"{px(560)}x{px(640)}")
-        self.root.minsize(px(480), px(500))
+        self.root.geometry(f"{px(520)}x{px(600)}")
+        self.root.minsize(px(460), px(520))
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self.root.report_callback_exception = lambda *exc: sys.excepthook(*exc)
+        self._init_theme()
         self._build_ui()
 
         self.recorder = Recorder(self)
@@ -590,6 +1346,7 @@ class App:
         if (background or self.settings["start_minimized"]) and self.tray is not None:
             self.root.withdraw()
         self.root.after(20, self._poll)
+        self.root.after(3000, self._poll_theme)
         if os.environ.get("NPU_DICTATE_TEST_QUIT_AFTER"):  # test hook
             self.root.after(int(float(os.environ["NPU_DICTATE_TEST_QUIT_AFTER"]) * 1000), self.quit)
         for item in filter(None, os.environ.get("NPU_DICTATE_TEST_EVENTS", "").split(",")):  # test hook: "s:event"
@@ -597,116 +1354,208 @@ class App:
             self.root.after(int(float(at) * 1000), lambda n=name: self.post((n,)))
 
     # ---- UI -----------------------------------------------------------------
-    def _build_ui(self):
-        root = self.root
-        style = ttk.Style()
-        style.configure(".", font=("Segoe UI", 10))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17))
-        style.configure("Muted.TLabel", foreground="#6e6e73")
-        style.configure("Head.TLabel", font=("Segoe UI Semibold", 11))
-        style.configure("Status.TLabel", font=("Segoe UI Semibold", 10))
-        style.configure("Treeview", rowheight=px(22))
-        outer = ttk.Frame(root, padding=(px(20), px(16), px(20), px(14)))
-        outer.pack(fill="both", expand=True)
+    def _init_theme(self):
+        """Fonts, then the colors of the current Windows theme, before any widget is built."""
+        pick_fonts(self.root)
+        self.themed = []  # widgets with apply_theme(tok), recolored on a theme switch
+        self.dark = not win32.apps_use_light_theme()
+        self.tok = TOKENS["dark" if self.dark else "light"]
+        build_style(self.root, self.tok)
+        self.root.configure(bg=self.tok["bg"])
+        self.root.bind("<Map>", self._on_map, add="+")
 
-        top = ttk.Frame(outer)
-        top.pack(fill="x")
-        ttk.Label(top, text=APP, style="Title.TLabel").pack(side="left")
-        self.status_dot = tk.Canvas(top, width=px(12), height=px(12), highlightthickness=0, bg=root.cget("bg"))
-        self.status_lbl = ttk.Label(top, text="", style="Status.TLabel")
-        self.status_lbl.pack(side="right")
-        self.status_dot.pack(side="right", padx=(0, px(6)))
-        self.hint = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=px(500), justify="left")
-        self.hint.pack(fill="x", pady=(px(4), px(4)))
+    def _on_map(self, event):
+        """The window frame (and so its title bar) exists once the window is shown."""
+        if event.widget is self.root:
+            win32.set_dark_title_bar(win32.toplevel_hwnd(self.root), self.dark)
+
+    def _apply_theme(self, dark):
+        """Switches every widget to the light or dark colors."""
+        self.dark, self.tok = dark, TOKENS["dark" if dark else "light"]
+        build_style(self.root, self.tok)
+        self.root.configure(bg=self.tok["bg"])
+        for t in self.themed:
+            t.apply_theme(self.tok)
+        win32.set_dark_title_bar(win32.toplevel_hwnd(self.root), dark)
+        self._refresh()
+
+    def _poll_theme(self):
+        """Follows the Windows app mode (Settings > Personalization > Colors), read every 3 s."""
+        if self.quitting:
+            return
+        try:
+            dark = not win32.apps_use_light_theme()
+            if dark != self.dark:
+                self._apply_theme(dark)
+        finally:
+            if not self.quitting:
+                self.root.after(3000, self._poll_theme)
+
+    def _build_ui(self):
+        outer = ttk.Frame(self.root, padding=(px(20), px(16), px(20), px(14)))
+        outer.pack(fill="both", expand=True)
+        outer.bind("<Configure>", self._wrap)
+
+        head = ttk.Frame(outer)
+        head.pack(fill="x")
+        ttk.Label(head, text=APP, style="Title.TLabel").pack(side="left")
+        self.pill = StatusPill(head, self)
+        self.pill.pack(side="right")
+        self.hero = KeycapHero(outer, self)
+        self.hero.pack(fill="x", pady=(px(14), 0))
+        self.hint = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=px(480), justify="left")
+        self.hint.pack(fill="x", pady=(px(10), 0))
         self.progress = ttk.Progressbar(outer, maximum=1000)  # shown while the model downloads
         self.progress_shown = False
-        self.spacer = ttk.Frame(outer, height=px(8))
-        self.spacer.pack(fill="x")
 
-        box = ttk.LabelFrame(outer, text=" Settings ", padding=(px(14), px(8), px(14), px(10)))
-        box.pack(fill="x")
-        box.columnconfigure(1, weight=1)
-        r = 0
-        ttk.Label(box, text="Shortcut").grid(row=r, column=0, sticky="w", pady=px(4))
-        sc = ttk.Frame(box)
-        sc.grid(row=r, column=1, sticky="w", padx=(px(12), px(0)))
-        self.shortcut_lbl = ttk.Label(sc, text="", font=("Segoe UI Semibold", 10), width=22)
-        self.shortcut_lbl.pack(side="left")
-        self.shortcut_btn = ttk.Button(sc, text="Change…", command=self._capture_shortcut)
-        self.shortcut_btn.pack(side="left", padx=(px(8), px(0)))
-        r += 1
-        ttk.Label(box, text="Mode").grid(row=r, column=0, sticky="nw", pady=px(4))
+        # The footer is packed before the tabs, so a short window shrinks the tabs, never the footer.
+        self.footer = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=px(480), justify="left")
+        self.footer.pack(side="bottom", fill="x", pady=(px(8), 0))
+        ttk.Frame(outer, style="Divider.TFrame", height=px(1)).pack(side="bottom", fill="x", pady=(px(8), 0))
+
+        nb = ttk.Notebook(outer, style="Flat.TNotebook")
+        nb.pack(fill="both", expand=True, pady=(px(18), 0))
+        page = ttk.Frame(nb)
+        nb.add(page, text="Settings")
+        self._build_settings(page)
+        page = ttk.Frame(nb)
+        nb.add(page, text="History", padding=(0, px(12), 0, 0))
+        self.history_hint = ttk.Label(page, text="Click an entry to copy it.", style="Muted.TLabel")
+        self.history_list = HistoryList(page, self, self._copy_history)
+        self.history_list.pack(fill="both", expand=True)
+
+    def _wrap(self, event):
+        """The hint and the footer wrap to the window width (less the side padding and the label's border)."""
+        for label in (self.hint, self.footer):
+            label.configure(wraplength=max(px(100), event.width - 2 * px(20) - px(4)))
+
+    def _build_settings(self, parent):
+        """The Settings tab: group labels on the left, their settings on the right. Rows
+        reflow when the window is narrow, and the tab scrolls when it is short."""
+        area = ScrollFrame(parent, self)
+        area.pack(fill="both", expand=True)
+        f = area.inner
+        f.configure(padding=(0, px(12), 0, px(12)))
+        f.columnconfigure(0, minsize=px(96))
+        f.columnconfigure(2, weight=1)
+
+        def label(text, style="TLabel"):
+            return ttk.Label(f, text=text, style=style)
+
+        g_rec, mode_lbl = label("Recording", "Group.TLabel"), label("Mode")
         self.mode_var = tk.StringVar(value=self.settings["mode"])
-        mf = ttk.Frame(box)
-        mf.grid(row=r, column=1, sticky="w", padx=(px(12), px(0)), pady=px(2))
-        for k, v in MODES.items():
-            ttk.Radiobutton(mf, text=v, value=k, variable=self.mode_var, command=self._changed).pack(anchor="w")
-        r += 1
-        ttk.Label(box, text="Microphone").grid(row=r, column=0, sticky="w", pady=px(4))
+        mode = Segmented(f, self, self.mode_var, [("toggle", "Press to start"), ("hold", "Hold to talk")],
+                         self._changed)
+        mic_lbl = label("Microphone")
         self.mic_var = tk.StringVar()
-        self.mic_box = ttk.Combobox(box, textvariable=self.mic_var, state="readonly", width=40,
+        self.mic_box = ttk.Combobox(f, textvariable=self.mic_var, state="readonly", width=16, font=font("text", 10),
                                     postcommand=self._fill_mics)
-        self.mic_box.grid(row=r, column=1, sticky="w", padx=(px(12), px(0)), pady=px(4))
         self.mic_box.bind("<<ComboboxSelected>>", lambda e: self._changed())
         self._fill_mics()
-        r += 1
-        ttk.Label(box, text="Insert text").grid(row=r, column=0, sticky="nw", pady=px(4))
+
+        g_text, out_lbl = label("Text", "Group.TLabel"), label("Insert as")
         self.out_var = tk.StringVar(value=self.settings["output"])
-        of = ttk.Frame(box)
-        of.grid(row=r, column=1, sticky="w", padx=(px(12), px(0)), pady=px(2))
-        for k, v in OUTPUTS.items():
-            ttk.Radiobutton(of, text=v, value=k, variable=self.out_var, command=self._changed).pack(anchor="w")
-        r += 1
-        ttk.Label(box, text="Free memory").grid(row=r, column=0, sticky="w", pady=px(4))
-        uf = ttk.Frame(box)
-        uf.grid(row=r, column=1, sticky="w", padx=(px(12), px(0)), pady=px(4))
-        ttk.Label(uf, text="Unload the model after").pack(side="left")
+        out = Segmented(f, self, self.out_var, [("paste", "Paste"), ("type", "Type"), ("clipboard", "Copy only")],
+                        self._changed)
+        paste_note = label("Paste keeps your clipboard", "Muted.TLabel")
+        self.checks = {k: tk.BooleanVar(value=self.settings[k])
+                       for k in ("trailing_space", "sounds", "overlay", "start_minimized")}
+        space = ttk.Checkbutton(f, text="Add a space after the text", variable=self.checks["trailing_space"],
+                                command=self._changed)
+
+        g_mem = label("Memory", "Group.TLabel")
+        uf = ttk.Frame(f)
+        unload_lbl = ttk.Label(uf, text="Unload the model after")
         self.unload_var = tk.StringVar(value=str(self.settings["unload_after_s"]))
         sp = ttk.Spinbox(uf, from_=0, to=86400, increment=30, width=7, textvariable=self.unload_var,
-                         command=self._unload_changed)
-        sp.pack(side="left", padx=px(6))
+                         font=font("text", 10), command=self._unload_changed)
         sp.bind("<Return>", self._unload_changed)
         sp.bind("<FocusOut>", self._unload_changed)
-        ttk.Label(uf, text="s idle (0 = keep it loaded)").pack(side="left")
-        r += 1
-        cf = ttk.Frame(box)
-        cf.grid(row=r, column=0, columnspan=2, sticky="w", pady=(px(8), px(0)))
-        self.checks = {}
-        for i, (k, v) in enumerate((("trailing_space", "Add a space after the text"),
-                                    ("sounds", "Play start / stop sounds"),
-                                    ("overlay", "Show the recording indicator"),
-                                    ("start_minimized", "Start minimized to the tray"))):
-            var = tk.BooleanVar(value=self.settings[k])
-            ttk.Checkbutton(cf, text=v, variable=var, command=self._changed).grid(
-                row=i // 2, column=i % 2, sticky="w", padx=(px(0), px(24)), pady=px(1))
-            self.checks[k] = var
-        self.autostart_var = tk.BooleanVar(value=autostart_enabled())
-        ttk.Checkbutton(cf, text="Start with Windows", variable=self.autostart_var,
-                        command=self._toggle_autostart).grid(row=2, column=0, sticky="w", pady=px(1))
-        ttk.Button(cf, text="Add Start menu / desktop shortcuts", command=self._make_shortcuts).grid(
-            row=2, column=1, sticky="w", pady=(px(4), px(1)))
+        idle_lbl = ttk.Label(uf, text="s idle")
+        unload_note = label("0 keeps it loaded", "Muted.TLabel")
 
-        hist = ttk.Frame(outer)
-        hist.pack(fill="both", expand=True, pady=(px(14), px(0)))
-        hh = ttk.Frame(hist)
-        hh.pack(fill="x")
-        ttk.Label(hh, text="History", style="Head.TLabel").pack(side="left")
-        ttk.Label(hh, text="double-click to copy · kept only while the app runs", style="Muted.TLabel").pack(
-            side="left", padx=(px(8), px(0)))
-        tf = ttk.Frame(hist)
-        tf.pack(fill="both", expand=True, pady=(px(6), px(0)))
-        self.tree = ttk.Treeview(tf, columns=("time", "text"), show="headings", height=8, selectmode="browse")
-        self.tree.heading("time", text="Time")
-        self.tree.heading("text", text="Text")
-        self.tree.column("time", width=px(70), stretch=False)
-        self.tree.column("text", width=px(420))
-        sb = ttk.Scrollbar(tf, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        self.tree.bind("<Double-1>", self._copy_selected)
-        self.footer = ttk.Label(outer, text="", style="Muted.TLabel", wraplength=px(520), justify="left")
-        self.footer.pack(fill="x", pady=(px(8), px(0)))
+        g_app = label("App", "Group.TLabel")
+        cf = ttk.Frame(f)
+        self.autostart_var = tk.BooleanVar(value=autostart_enabled())
+        boxes = [ttk.Checkbutton(cf, text="Start with Windows", variable=self.autostart_var,
+                                 command=self._toggle_autostart)]
+        boxes += [ttk.Checkbutton(cf, text=text, variable=self.checks[k], command=self._changed)
+                  for k, text in (("start_minimized", "Start minimized"), ("sounds", "Play sounds"),
+                                  ("overlay", "Show recording indicator"))]
+        link = LinkButton(f, self, "Add Start menu and desktop shortcuts", self._make_shortcuts)
+
+        # Rows: ("pair", label, control, sticky), ("note", widget, under the control), ("full", widget).
+        groups = [(g_rec, [("pair", mode_lbl, mode, "w"), ("pair", mic_lbl, self.mic_box, "ew")]),
+                  (g_text, [("pair", out_lbl, out, "w"), ("note", paste_note, True), ("full", space)]),
+                  (g_mem, [("full", uf), ("note", unload_note, False)]),
+                  (g_app, [("full", cf), ("full", link)])]
+        dividers = [ttk.Frame(f, style="Divider.TFrame", height=px(1)) for _ in groups[1:]]
+        shown = None  # what the current layout was made for
+
+        def show_note(*_):
+            if self.out_var.get() == "paste":
+                paste_note.grid()
+            else:
+                paste_note.grid_remove()
+
+        def layout(width):
+            """Wide: sub-labels left of their controls, the unload sentence on one line,
+            check boxes in two columns. Narrow: each of these on more lines."""
+            nonlocal shown
+            avail = width - px(96)
+            wide = (max(w.winfo_reqwidth() for w in (mode_lbl, mic_lbl, out_lbl)) + px(12)
+                    + max(mode.winfo_reqwidth(), out.winfo_reqwidth()) <= avail)
+            two = sum(max(b.winfo_reqwidth() for b in boxes[i::2]) for i in (0, 1)) + px(16) <= avail
+            one_line = sum(w.winfo_reqwidth() for w in (unload_lbl, sp, idle_lbl)) + px(12) <= avail
+            key = (wide, two, one_line) + tuple(w.winfo_reqheight() for w in (g_rec, mode_lbl, mode, self.mic_box,
+                                                                               out, sp, boxes[0]))
+            if key == shown:
+                return
+            shown = key
+            if one_line:
+                unload_lbl.grid(row=0, column=0, columnspan=1, sticky="w", pady=0)
+                sp.grid(row=0, column=1, sticky="w", padx=px(6), pady=0)
+                idle_lbl.grid(row=0, column=2, sticky="w", pady=0)
+            else:  # the spin box under the words
+                unload_lbl.grid(row=0, column=0, columnspan=2, sticky="w", pady=0)
+                sp.grid(row=1, column=0, sticky="w", padx=(0, px(6)), pady=(px(4), 0))
+                idle_lbl.grid(row=1, column=1, sticky="w", pady=(px(4), 0))
+            first_line = {cf: boxes[0], uf: sp if one_line else unload_lbl}  # what a group label lines up with
+            for i, b in enumerate(boxes):
+                r, c = divmod(i, 2) if two else (i, 0)
+                b.grid(row=r, column=c, sticky="w", padx=(0, px(16) if two and c == 0 else 0),
+                       pady=(px(4) if r else 0, 0))
+            r = 0
+            for n, (group, rows) in enumerate(groups):
+                if n:
+                    dividers[n - 1].grid(row=r, column=0, columnspan=3, sticky="ew", padx=0, pady=px(12))
+                    r += 1
+                for i, (kind, w, *more) in enumerate(rows):
+                    top, r0 = 0 if i == 0 else px(2) if kind == "note" else px(8), r
+                    if kind == "pair" and wide:
+                        w.grid(row=r, column=1, columnspan=1, sticky="w", padx=(0, px(12)), pady=(top, 0))
+                        more[0].grid(row=r, column=2, columnspan=1, sticky=more[1], padx=0, pady=(top, 0))
+                        line = max(w.winfo_reqheight(), more[0].winfo_reqheight())
+                    elif kind == "pair":
+                        w.grid(row=r, column=1, columnspan=2, sticky="w", padx=0, pady=(top, 0))
+                        r += 1
+                        more[0].grid(row=r, column=1, columnspan=2, sticky=more[1], padx=0, pady=(px(4), 0))
+                        line = w.winfo_reqheight()
+                    elif kind == "note" and wide and more[0]:
+                        w.grid(row=r, column=2, columnspan=1, sticky="w", padx=0, pady=(top, 0))
+                    else:
+                        w.grid(row=r, column=1, columnspan=2, sticky="w", padx=0, pady=(top, 0))
+                        line = first_line.get(w, w).winfo_reqheight()
+                    if i == 0:  # the group label lines up with the middle of its first line
+                        group.grid(row=r0, column=0, sticky="nw", padx=0,
+                                   pady=(max(0, (line - group.winfo_reqheight()) // 2), 0))
+                    r += 1
+            show_note()
+
+        self.out_var.trace_add("write", show_note)
+        area.on_width = layout
+        layout(px(480))  # until the tab is shown and has its real width
+        area.bind_wheel()
 
     # ---- model and engine lifecycle -------------------------------------------
     def send_piece(self, session, index, audio):
@@ -888,11 +1737,11 @@ class App:
     def _refresh(self):
         s = self.settings
         key = win32.label(s["shortcut"])
-        self.shortcut_lbl.configure(text=key if not self.capturing else "Press the new shortcut… (Esc cancels)")
         state = "recording" if self.recording else self.engine_state
-        self.status_lbl.configure(text=STATES[state])
-        self.status_dot.delete("all")
-        self.status_dot.create_oval(1, 1, px(11), px(11), fill=COLORS[state], outline="")
+        self.pill.set(state)
+        self.hero.set(key.split("+"), "capturing" if self.capturing else "pressed" if self.recording
+                      else "error" if self.engine_state == "error"
+                      else "muted" if self.engine_state in ("loading", "download", "unloaded") else "normal")
         if self.engine_state == "download":
             done, total = self.downloading
             hint = (f"Downloading the speech model, {done / 2**20:.0f} of {total / 2**20:.0f} MB. "
@@ -906,31 +1755,42 @@ class App:
             hint = (f"The model is unloaded to free memory. Press {key} and just start speaking: it loads again "
                     "in a few seconds and your speech is transcribed once it is ready.")
         elif s["mode"] == "toggle":
-            hint = f"Press {key}, speak, then press {key} again: the text goes into the focused text box."
+            hint = f"Press {key}, speak, then press it again."
         else:
-            hint = f"Hold {key} while you speak; release it and the text goes into the focused text box."
+            hint = f"Hold {key} while you speak, then let go."
         self.hint.configure(text=hint)
         show = self.engine_state == "download"
         if show != self.progress_shown:
             self.progress_shown = show
             if show:
-                self.progress.pack(fill="x", before=self.spacer)
+                self.progress.pack(fill="x", pady=(px(10), 0), after=self.hint)
             else:
                 self.progress.pack_forget()
         if show:
             done, total = self.downloading
             self.progress["value"] = 1000 * done / max(total, 1)
+        self._show_history()
         tray = getattr(self, "tray", None)
         if tray is not None and getattr(self, "_tray_state", None) != state:
             self._tray_state = state
             tray.icon = icon_image(COLORS[state])
             tray.title = f"{APP}: {STATES[state]}"
 
-    def _copy_selected(self, event=None):
-        sel = self.tree.selection()
-        if sel:
-            text = self.history[len(self.history) - 1 - self.tree.index(sel[0])]["text"]
-            self.out_q.put((None, text, "clipboard", None))
+    def _show_history(self):
+        """The history list, newest first; the empty text names the current shortcut."""
+        key = win32.label(self.settings["shortcut"])
+        self.history_list.set_items(self.history[::-1], f"Nothing dictated yet. Press {key} and speak; your text "
+                                                        "also appears here. The list is kept only while the app runs.")
+        if bool(self.history) != bool(self.history_hint.winfo_manager()):
+            if self.history:
+                self.history_hint.pack(anchor="w", pady=(0, px(8)), before=self.history_list)
+            else:
+                self.history_hint.pack_forget()
+
+    def _copy_history(self, index):
+        """A click on a history entry (0 = newest): the output thread copies it, as for a dictation."""
+        self.out_q.put((None, self.history_list.items[index]["text"], "clipboard", None))
+        self.history_list.flash(index)
 
     # ---- shortcut ------------------------------------------------------------
     def _register_shortcut(self, combo):
@@ -1120,9 +1980,7 @@ class App:
                         s["target"]))
         self.history.append({"time": time.strftime("%H:%M"), "text": text})
         del self.history[:-50]
-        self.tree.insert("", 0, values=(self.history[-1]["time"], text))
-        for extra in self.tree.get_children()[50:]:
-            self.tree.delete(extra)
+        self._show_history()
         if not s.get("failed"):
             self.footer.configure(text=f"Last: {s['seconds']:.1f} s recorded, NPU encoder {1000 * s['npu']:.0f} ms, "
                                        f"text ready {1000 * latency:.0f} ms after you stopped.")
@@ -1321,7 +2179,7 @@ class App:
             _, session, done, err = ev
             self.last_active = time.monotonic()
             if session is None:  # copied from the history list
-                self.footer.configure(text=f"Could not copy: {err}" if err else "Copied to the clipboard.")
+                self.footer.configure(text=f"Could not copy: {err}" if err else "Copied.")
             elif err:
                 self.overlay.show("error", "Could not insert the text", hold_s=2.0)
                 self.footer.configure(text=f"Insert failed: {err}. The text is in the history.")
