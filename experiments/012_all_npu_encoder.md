@@ -75,8 +75,8 @@ rules). The cause found offline: each task group started all input fills
 before any output drain, and attention groups started 6 to 9 transfers on one
 shim channel, whose task queue holds four. A push into a full queue is
 dropped, and the core that waits for that transfer waits forever. The
-investigation and fix below are by Codex (astra), and were validated on
-hardware as described above: health check, then 12 correctness runs, then
+offline investigation and fix below were validated on hardware as described
+above: health check, then 12 correctness runs, then
 the 210-utterance evaluation.
 
 ## Offline H1 investigation and candidate fix (2026-09-27)
@@ -189,9 +189,8 @@ occurred, including no health check.
 
 There are zero oversized or fills-before-drains groups in these modules.
 At 1 block the new binaries are 667,584 / 665,008 bytes (old: 649,728 /
-647,152); performance impact is unmeasured. Scratch MLIR, decoded instructions,
-and offline build outputs are under
-`C:/Users/abhir/Documents/Codex/2026-09-27/work-in-c-users-abhir-desktop/work/012_offline/`.
+647,152); performance impact is unmeasured. The scratch MLIR, decoded instructions
+and offline build outputs were kept outside the repository.
 
 Reproduce the offline checks without opening the NPU:
 

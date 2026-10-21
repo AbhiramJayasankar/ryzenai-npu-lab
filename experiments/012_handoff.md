@@ -6,7 +6,7 @@ is fixed (below); read the safety rules before running new NPU programs.
 
 **Status (2026-09-27, 22:00 IST): the hang is fixed.** Cause: shim task-queue
 overflow (four entries per channel; attention groups pushed 6 to 9 transfers
-before any drain). Codex's fix (drains before fills, at most four starts per
+before any drain). The fix (drains before fills, at most four starts per
 channel between verified completions, queue checks in `check()`) ran after a
 reboot: health check, 12 correctness runs, then the 210-utterance WER
 evaluation, 283 encoder calls / 566 submissions without a hang. Results in

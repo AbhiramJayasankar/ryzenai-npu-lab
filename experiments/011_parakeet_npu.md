@@ -320,9 +320,8 @@ measurement are in [`011_results.json`](011_results.json).
 
 ## Limits
 
-* One laptop, AC power, other apps open (Chrome, ChatGPT, WhatsApp and
-  several Claude sessions); the Bonsai llama-server was stopped to free
-  memory. CPU timings vary by about 5% between runs.
+* One laptop, AC power, other apps open (a browser and chat apps); the
+  local llama-server was stopped to free memory. CPU timings vary by about 5% between runs.
 * WER on a 210-utterance subset with a simple normalizer; backend
   differences are the reliable part.
 * The Vitis AI results are for Ryzen AI 1.7.0 with driver 32.0.203.280 on

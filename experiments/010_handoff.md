@@ -160,7 +160,7 @@ differ only where the reference's top logits tie in BF16.
 
 | Step | Decode per token | What changed |
 | --- | ---: | --- |
-| Start (Codex's path) | ~400–470 ms | 1 core per layer, ~3,000 synchronized 8 KB transfers per layer, many program switches |
+| Start (experiments 006–009) | ~400–470 ms | 1 core per layer, ~3,000 synchronized 8 KB transfers per layer, many program switches |
 | 8 cores, one stream each, direct XRT | 46 ms | measured DDR ceiling first; packed weights for one long DMA per stage |
 | Vectorized norm/SiLU/conv | 32.6 ms | scalar float is emulated on AIE; cost ~1 ms per layer |
 | One core program for both layer kinds | 28 ms | program switches were ~0.5 ms each |
@@ -261,10 +261,8 @@ of [`010_x8_engine.md`](010_x8_engine.md).
 
 ## 11. Provenance
 
-Experiments 001–009 were done by Codex (see [`006_handoff.md`](006_handoff.md)
-and [`009_prefill.md`](009_prefill.md)). Experiment 010 was built in a Claude
-Code session on 2026-09-27; Codex's scheduled run (automation
-`explore-ryzen-npu-low-level-efficiency`, daily 10:00) then improved its own
-paired prefill on the older path (13.7 → 8.1 s for 34 tokens), validated the
-010 engine, fixed the chat runner's tokens/s count and committed and pushed
-everything as 54f2040.
+Experiments 001–009 are described in [`006_handoff.md`](006_handoff.md)
+and [`009_prefill.md`](009_prefill.md). Experiment 010 was built on
+2026-09-27. A later pass improved the paired prefill on the older path
+(13.7 → 8.1 s for 34 tokens), validated the 010 engine, fixed the chat
+runner's tokens/s count and committed everything as 54f2040.
