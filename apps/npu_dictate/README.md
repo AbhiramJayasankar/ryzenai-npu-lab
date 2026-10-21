@@ -6,6 +6,11 @@ recognition is Parakeet TDT 0.6B v2 with its 24 encoder layers on the Ryzen AI
 NPU (the 1-block program of [experiment 012](../../experiments/012_all_npu_encoder.md));
 mel features, the subsampling prefix and the TDT decoder run on the CPU.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../docs/img/npu_dictate_dark.png">
+  <img alt="The NPU Dictate window while recording: the Ctrl+Shift+Space shortcut drawn as red keycaps, with settings for mode, microphone, text insertion and idle unload" src="../../docs/img/npu_dictate_light.png" width="392">
+</picture>
+
 ## Install
 
 1. Download `NPU-Dictate-<version>-win64.zip` from the

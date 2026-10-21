@@ -32,6 +32,11 @@ at typing speed ([`render.py`](docs/demo/render.py) lists every edit). For
 the full story, read the [technical write-up](docs/writeup.md).
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/npu_dictate_dark.png">
+  <img alt="The NPU Dictate window while recording: the Ctrl+Shift+Space shortcut drawn as red keycaps, with settings for mode, microphone, text insertion and idle unload" src="docs/img/npu_dictate_light.png" width="392">
+</picture>
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/llm_decode_dark.svg">
   <img alt="LFM2.5-230M decode speed: llama.cpp Q8_0 on the CPU 160 tok/s, llama.cpp F16 91, NPU 8-core engine 58, PyTorch BF16 on the CPU 33, first all-NPU path 2.2" src="docs/img/llm_decode_light.svg" width="760">
 </picture>
@@ -155,7 +160,7 @@ bit-identical output.
 | [`apps/npu_dictate/`](apps/npu_dictate) | Push-to-talk dictation app for Windows |
 | [`experiments/`](experiments/README.md) | Numbered experiments 001–012: write-ups, probes, validation and benchmark scripts |
 | [`docs/setup.md`](docs/setup.md) | Hardware, software versions and how to set up IRON on Windows |
-| [`tests/`](tests) | CPU-only tests run by CI: the dictation chunker and the chart renderer (the NPU code is checked on the laptop by the validation scripts) |
+| [`tests/`](tests) | CPU-only tests run by CI: the dictation chunker, the model download and the chart renderer (the NPU code is checked on the laptop by the validation scripts) |
 | [`docs/writeup.md`](docs/writeup.md) | Technical write-up: the measurements, both designs, the hang and what is left |
 
 ## Run it
