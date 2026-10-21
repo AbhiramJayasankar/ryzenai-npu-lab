@@ -29,7 +29,11 @@ kernel32.GlobalLock.argtypes = [w.HANDLE]
 kernel32.GlobalLock.restype = ctypes.c_void_p
 kernel32.GlobalUnlock.argtypes = [w.HANDLE]
 kernel32.GlobalFree.argtypes = [w.HANDLE]
+kernel32.CreateMutexW.argtypes = [w.LPVOID, w.BOOL, w.LPCWSTR]
 kernel32.CreateMutexW.restype = w.HANDLE
+kernel32.OpenMutexW.argtypes = [w.DWORD, w.BOOL, w.LPCWSTR]
+kernel32.OpenMutexW.restype = w.HANDLE
+kernel32.CloseHandle.argtypes = [w.HANDLE]
 user32.CreateWindowExW.restype = w.HWND
 user32.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int,
                                    ctypes.c_int, ctypes.c_int, w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
@@ -93,6 +97,12 @@ def wait_modifiers_released(timeout=2.0):
             return True
         time.sleep(0.01)
     return False
+
+
+def modifiers_down(exclude=("ctrl",)):
+    """Whether a modifier key not in `exclude` is down (by default Shift, Alt or
+    Win: Ctrl is pressed by the synthetic Ctrl+V anyway)."""
+    return any(key_down(v) for m, vks in MOD_VKS.items() if m not in exclude for v in vks)
 
 
 # -- global hotkey ---------------------------------------------------------------
@@ -229,7 +239,10 @@ def clipboard_text():
             formats.add(fmt)
         if not formats:
             return False, None
-        if not formats <= TEXT_FORMATS | {user32.RegisterClipboardFormatW(n) for n in PRIVATE_FORMATS}:
+        private = {user32.RegisterClipboardFormatW(n) for n in PRIVATE_FORMATS}
+        if formats <= private:  # only the markers (1.0.0 left them when it restored an empty clipboard)
+            return False, None
+        if not formats <= TEXT_FORMATS | private:
             return True, None
         h = user32.GetClipboardData(CF_UNICODETEXT)
         if not h:
@@ -250,7 +263,7 @@ def _replace(text, history):
         raise OSError("could not empty the clipboard")
     if text is not None and not _set_data(CF_UNICODETEXT, (text + "\0").encode("utf-16-le")):
         raise OSError("could not put the text on the clipboard")
-    if not history:
+    if not history and text is not None:  # markers on an empty clipboard would read as content
         for name in PRIVATE_FORMATS:
             _set_data(user32.RegisterClipboardFormatW(name), b"\0\0\0\0")
 
@@ -369,14 +382,70 @@ def work_area():
     return r.left, r.top, r.right, r.bottom
 
 
+THEME_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+
+
+def apps_use_light_theme():
+    """The app mode in Settings > Personalization > Colors: False for dark. True if it cannot be read."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, THEME_KEY) as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] != 0
+    except OSError:
+        return True
+
+
+def set_dark_title_bar(hwnd, dark):
+    """Dark or light title bar (DWMWA_USE_IMMERSIVE_DARK_MODE = 20, Windows 10 20H1 and later).
+    Only looks: any failure is ignored."""
+    if not hwnd:
+        return
+    try:
+        value = w.BOOL(bool(dark))
+        ctypes.WinDLL("dwmapi").DwmSetWindowAttribute(w.HWND(hwnd), 20, ctypes.byref(value), ctypes.sizeof(value))
+        # NOSIZE | NOMOVE | NOZORDER | NOACTIVATE | FRAMECHANGED: repaint the title bar now
+        user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x1 | 0x2 | 0x4 | 0x10 | 0x20)
+    except Exception:
+        pass
+
+
 def single_instance(name):
     """False if another process already holds the named mutex."""
     single_instance.handle = kernel32.CreateMutexW(None, False, name)
     return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
 
 
+def create_mutex(name):
+    """The handle of a new (or existing) named mutex, not owned. The mutex exists
+    while some process keeps a handle to it; process exit closes the handle."""
+    return kernel32.CreateMutexW(None, False, name)
+
+
+def mutex_exists(name):
+    """True if some process holds a handle to the named mutex."""
+    h = kernel32.OpenMutexW(0x00100000, False, name)  # SYNCHRONIZE
+    if h:
+        kernel32.CloseHandle(h)
+        return True
+    return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED: it exists (made by an elevated process)
+
+
 def set_app_id(app_id):
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+
+
+CSIDL_PROGRAMS, CSIDL_DESKTOPDIRECTORY = 0x02, 0x10
+
+
+def shell_folder(csidl):
+    """Path of a folder of the current user, e.g. CSIDL_DESKTOPDIRECTORY (also when
+    the Desktop was moved, as OneDrive folder backup does)."""
+    buf = ctypes.create_unicode_buffer(260)  # MAX_PATH
+    hr = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)  # SHGFP_TYPE_CURRENT
+    if hr != 0:
+        raise OSError(f"Windows did not find the folder (CSIDL {csidl:#04x}, HRESULT {hr & 0xFFFFFFFF:#010x})")
+    return buf.value
 
 
 def set_dpi_aware():

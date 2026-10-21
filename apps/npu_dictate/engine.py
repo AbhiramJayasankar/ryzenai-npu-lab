@@ -3,7 +3,8 @@ layers on the NPU (experiment 012, 1-block program, <= 10.24 s per call),
 loaded from an exported bundle (export_bundle.py, npu_runtime.py).
 
 Runs in its own process so NPU calls never stall the hotkey, audio capture or
-UI of the app. Protocol (multiprocessing queues, plus a stop event):
+UI of the app. Protocol (multiprocessing queues, plus a stop event and an
+npu_started event that the engine sets right before its first NPU submission):
   in:  ("audio", session, index, float32 16 kHz mono)   ("quit",)
   out: ("status", text)  ("npu",)  ("ready", load_s)  ("start_failed", reason, retry)
        ("fatal", message)  ("busy", session, index)  ("piece_failed", session, index, audio_s)
@@ -11,7 +12,10 @@ UI of the app. Protocol (multiprocessing queues, plus a stop event):
 "start_failed" means nothing reached the NPU; retry says whether the cause is
 one that clears by itself (memory, files), so the app may try again on its own.
 After "npu", any NPU error ends the engine: the lab's safety rule is no retries.
-Once the app sets the stop event, no further piece is started.
+Once the app sets the stop event, no further piece is started. While the
+process lives it holds the named mutex MUTEX, so a later run of the app waits
+for it (one engine on the NPU at a time, across runs too); an engine that finds
+it held exits at once with "start_failed".
 """
 
 import ctypes
@@ -28,6 +32,7 @@ import traceback
 # without ~1.2 GB of it left for the buffers plus ~0.3 GB for the ONNX parts and
 # Python, the allocation would fail anyway, so loading is not attempted.
 NEED_COMMIT_MB = 1536
+MUTEX = "Local\\NPU-Dictate-engine"
 
 
 def memory_mb():
@@ -81,13 +86,19 @@ def start_failure(e):
 
 
 _outq = None
+_mutex = None
 
 
-def serve(inq, outq, log_path, bundle, stop=None):
+def serve(inq, outq, log_path, bundle, stop=None, npu_started=None):
     import faulthandler
+    import multiprocessing as mp
     from pathlib import Path
 
-    global _outq
+    import win32  # ctypes only: no window, thread or hook is created
+
+    global _outq, _mutex
+    _mutex = win32.create_mutex(MUTEX)  # released when this process ends, however it ends
+    err = ctypes.get_last_error()  # win32's kernel32 keeps it (use_last_error)
     _outq = outq
     bundle = Path(bundle)
     die = os.environ.get("NPU_DICTATE_TEST_DIE_ONCE")  # test hook: die at startup if this file exists
@@ -98,8 +109,14 @@ def serve(inq, outq, log_path, bundle, stop=None):
     sys.stdout = sys.stderr = log
     faulthandler.enable(log, all_threads=True)  # native crashes go to engine.log
     print(f"\n=== engine start {time.strftime('%Y-%m-%d %H:%M:%S')} pid {os.getpid()}")
+    if not _mutex:
+        print(f"could not create the mutex {MUTEX} (error {err})")
+    elif err == 183:  # ERROR_ALREADY_EXISTS: another engine process holds it; no XRT call is made
+        print("another engine process holds the mutex; not starting")
+        outq.put(("start_failed", "another NPU engine process is still running", True))
+        return _exit(0)
     if os.environ.get("NPU_DICTATE_FAKE_ENGINE"):  # test hook: no NPU, no model
-        return _fake(inq, outq, stop)
+        return _fake(inq, outq, stop, npu_started)
     if not getattr(sys, "frozen", False):  # from the repository: parakeet_pipeline lives in experiments/
         sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "experiments"))
     try:
@@ -129,9 +146,15 @@ def serve(inq, outq, log_path, bundle, stop=None):
         print(traceback.format_exc())
         outq.put(("start_failed", *start_failure(e)))
         return _exit(0)
+    parent = mp.parent_process()
+    if (stop is not None and stop.is_set()) or (parent is not None and not parent.is_alive()):
+        print("closed by the app, or the app is gone, before the first NPU submission")
+        return _exit(0)
     code = 0
     try:
         outq.put(("npu",))  # from here on a failure is an NPU failure: no retries
+        if npu_started is not None:
+            npu_started.set()  # read by the app directly, not through the queue
         model.transcribe(np.zeros(pp.SR, np.float32))  # warm-up (first NPU submissions)
         load_s = time.perf_counter() - t
         print(f"ready in {load_s:.1f} s")
@@ -196,11 +219,13 @@ def _exit(code):
     os._exit(code)
 
 
-def _fake(inq, outq, stop):
+def _fake(inq, outq, stop, npu_started=None):
     """Engine stand-in for testing the app without the NPU: "speech" is
     reported as its length. NPU_DICTATE_FAKE_ENGINE=<load seconds>[,<seconds per piece>]."""
     load, _, per = os.environ["NPU_DICTATE_FAKE_ENGINE"].partition(",")
     outq.put(("npu",))
+    if npu_started is not None:
+        npu_started.set()
     time.sleep(float(load or 0))
     outq.put(("ready", float(load or 0)))
     while True:
