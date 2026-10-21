@@ -14,7 +14,8 @@ one that clears by itself (memory, files), so the app may try again on its own.
 After "npu", any NPU error ends the engine: the lab's safety rule is no retries.
 Once the app sets the stop event, no further piece is started. While the
 process lives it holds the named mutex MUTEX, so a later run of the app waits
-for it (one engine on the NPU at a time, across runs too).
+for it (one engine on the NPU at a time, across runs too); an engine that finds
+it held exits at once with "start_failed".
 """
 
 import ctypes
@@ -97,6 +98,7 @@ def serve(inq, outq, log_path, bundle, stop=None, npu_started=None):
 
     global _outq, _mutex
     _mutex = win32.create_mutex(MUTEX)  # released when this process ends, however it ends
+    err = ctypes.get_last_error()  # win32's kernel32 keeps it (use_last_error)
     _outq = outq
     bundle = Path(bundle)
     die = os.environ.get("NPU_DICTATE_TEST_DIE_ONCE")  # test hook: die at startup if this file exists
@@ -108,7 +110,11 @@ def serve(inq, outq, log_path, bundle, stop=None, npu_started=None):
     faulthandler.enable(log, all_threads=True)  # native crashes go to engine.log
     print(f"\n=== engine start {time.strftime('%Y-%m-%d %H:%M:%S')} pid {os.getpid()}")
     if not _mutex:
-        print(f"could not create the mutex {MUTEX} (error {ctypes.get_last_error()})")
+        print(f"could not create the mutex {MUTEX} (error {err})")
+    elif err == 183:  # ERROR_ALREADY_EXISTS: another engine process holds it; no XRT call is made
+        print("another engine process holds the mutex; not starting")
+        outq.put(("start_failed", "another NPU engine process is still running", True))
+        return _exit(0)
     if os.environ.get("NPU_DICTATE_FAKE_ENGINE"):  # test hook: no NPU, no model
         return _fake(inq, outq, stop, npu_started)
     if not getattr(sys, "frozen", False):  # from the repository: parakeet_pipeline lives in experiments/

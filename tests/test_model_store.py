@@ -127,16 +127,27 @@ def test_mismatch_not_retried(server, tmp_path, monkeypatch, served):
 
 
 def test_shorter_file_not_retried(server, tmp_path, monkeypatch):
-    """A file shorter than the manifest says looks like a dropped connection first
-    (kept and resumed); the resume then shows it ends early."""
+    """A complete response shorter than the manifest says is a mismatch, not a
+    dropped connection (that case is test_resume_with_206)."""
     m = make_manifest(server.files)
     server.files = {**server.files, "weights.bin": WEIGHTS[:2 * MB]}
     monkeypatch.setattr(model_store, "manifest", lambda: m)
-    with pytest.raises(ConnectionError):
-        fetch(tmp_path)
     with pytest.raises(model_store.NoAutoRetry, match="weights.bin"):
         fetch(tmp_path)
     assert not (tmp_path / "weights.bin.part").exists()
+
+
+def test_resumed_mismatch_retried_whole(server, tmp_path):
+    """Bad bytes kept from an earlier attempt: retried automatically, from the start."""
+    (tmp_path / "weights.bin.part").write_bytes(b"x" * MB)
+    with pytest.raises(ValueError, match="weights.bin") as e:
+        fetch(tmp_path)
+    assert not isinstance(e.value, model_store.NoAutoRetry)
+    assert not (tmp_path / "weights.bin.part").exists()
+    server.log.clear()
+    fetch(tmp_path)
+    complete(tmp_path, server.files)
+    assert ("weights.bin", None, 200) in server.log
 
 
 @pytest.mark.parametrize("winerror", [False, True])
