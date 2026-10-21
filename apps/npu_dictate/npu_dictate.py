@@ -340,9 +340,13 @@ def refresh_devices():
     try:
         import sounddevice as sd
 
+        t = time.perf_counter()
         if sd._initialized:  # not after a failed _initialize()
             sd._terminate()
         sd._initialize()
+        dt = time.perf_counter() - t
+        if dt > 0.5:  # it delays the start of each recording
+            log(f"reading the audio devices again took {dt:.2f} s")
     except Exception as e:
         log(f"could not read the audio devices again: {e}")
 
@@ -492,8 +496,8 @@ class Engine:
 
     def npu_overdue(self, now):
         """Alive and in NPU work for longer than WATCHDOG_S (an idle engine is never)."""
-        return (self.npu_since is not None and now - self.npu_since > WATCHDOG_S and self.npu_started.is_set()
-                and self.alive())
+        since = self.npu_since  # read once: the reader thread may set it to None meanwhile
+        return since is not None and now - since > WATCHDOG_S and self.npu_started.is_set() and self.alive()
 
     def send(self, session, index, audio):
         self.inq.put(("audio", session, index, audio))
@@ -1701,10 +1705,9 @@ class App:
         no new engine may start, so dictation stops for good (shown on the overlay)."""
         if not any(e.close_gave_up and e.alive() for e in self.closing):
             return False
-        msg = "The previous engine process is still stuck in the NPU driver. Restart Windows."
         if self.engine_state != "error":
-            self._engine_failed(msg)
-        self.overlay.show("error", msg, hold_s=3.0)
+            self._engine_failed("The previous engine process is still stuck in the NPU driver. Restart Windows.")
+        self.overlay.show("error", "Engine stuck: restart Windows", hold_s=3.0)
         return True
 
     def _unload_engine(self):
@@ -2102,6 +2105,7 @@ class App:
         del self.sessions[session]
         text = " ".join(s["parts"][i] for i in range(s["n"]) if s["parts"][i]).strip()
         if s.get("failed"):
+            self._sound("error")  # the only one for this dictation, with or without text
             self.overlay.show("error", "Part of the dictation could not be transcribed", hold_s=3.0)
             self.footer.configure(text="A piece of the dictation failed on the CPU and is missing"
                                        + (" from the text below." if text else ".") + " Details in engine.log.")
@@ -2157,7 +2161,8 @@ class App:
                             if moved():  # checked right before the keystroke
                                 done = "moved"
                             elif win32.modifiers_down():  # Shift, Alt or Win pressed since the wait above
-                                done = "held"  # the text stays on the clipboard
+                                win32.set_clipboard(text)  # left on the clipboard, as after the wait
+                                done = "held"
                             else:
                                 win32.send_paste()
                                 time.sleep(0.6)  # slow apps read the clipboard late
@@ -2333,20 +2338,24 @@ class App:
         elif kind == "output_done":
             _, session, done, err, failed = ev
             self.last_active = time.monotonic()
+            instead = {"moved": "the focused window changed before it was ready.",
+                       "held": "Shift, Alt or Win was still held down."}.get(done)  # why it was only copied
             if session is None:  # copied from the history list
                 self.footer.configure(text=f"Could not copy: {err}" if err else "Copied.")
             elif err:
                 self.overlay.show("error", "Could not insert the text", hold_s=2.0)
                 self.footer.configure(text=f"Insert failed: {err}. The text is in the history.")
+            elif failed and instead:
+                self.overlay.show("error", "Copied, part missing: press Ctrl+V", hold_s=3.0)
+                self.footer.configure(text="A piece of the dictation failed on the CPU and is missing (details in "
+                                      "engine.log). The rest was copied to the clipboard instead of inserted: "
+                                      + instead)
             elif failed:  # the rest went in, but a piece failed on the CPU (_check_done set the footer)
-                self._sound("error")
                 label = {"paste": "Inserted", "type": "Typed", "test": "Test output"}.get(done, "Copied")
                 self.overlay.show("error", f"{label}, but part of the dictation is missing", hold_s=3.0)
-            elif done in ("moved", "held"):
+            elif instead:
                 self.overlay.show("info", "Copied: press Ctrl+V to paste", hold_s=2.5)
-                self.footer.configure(text="The text was copied to the clipboard instead of inserted: "
-                                      + ("the focused window changed before it was ready." if done == "moved"
-                                         else "Shift, Alt or Win was still held down."))
+                self.footer.configure(text="The text was copied to the clipboard instead of inserted: " + instead)
             elif not self.recording:
                 label = {"paste": "Inserted", "type": "Typed", "clipboard": "Copied to the clipboard",
                          "test": "Test output"}[done]

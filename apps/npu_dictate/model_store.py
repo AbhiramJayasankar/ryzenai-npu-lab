@@ -76,7 +76,8 @@ def download(progress, cancelled, bundle=None):
     """Fetch the missing files. progress(done_bytes, total_bytes, name) is called
     from this thread; cancelled() is polled. Raises on any failure, NoAutoRetry when
     retrying cannot help by itself; a file is only renamed into place after its
-    SHA-256 matched. An interrupted file is resumed from its .part file."""
+    SHA-256 matched. An interrupted file is resumed from its .part file; a resumed
+    file that does not match is deleted and fetched whole by the next attempt."""
     bundle = Path(bundle or bundle_dir())
     m = manifest()
     total = done = 0
@@ -91,15 +92,17 @@ def download(progress, cancelled, bundle=None):
         for name in names:
             info = m["files"][name]
             part = bundle / (name + ".part")
-            h = hashlib.sha256()
+            h, left = hashlib.sha256(), 0
             have = part.stat().st_size if part.is_file() else 0  # left by an interrupted attempt
             if have > info["bytes"]:
+                part.unlink()
                 have = 0
             if have:
                 with open(part, "rb") as f:
                     for block in iter(lambda: f.read(1 << 20), b""):
                         h.update(block)
-            if have < info["bytes"]:
+                progress(done + have, total, name)
+            if have < info["bytes"] or not part.is_file():
                 headers = {"User-Agent": "npu-dictate"}
                 if have:
                     headers["Range"] = f"bytes={have}-"
@@ -107,6 +110,7 @@ def download(progress, cancelled, bundle=None):
                 try:
                     r = urllib.request.urlopen(req, timeout=60)
                 except urllib.error.HTTPError as e:
+                    e.close()
                     if e.code != 416:
                         raise
                     part.unlink(missing_ok=True)  # the server's file ends before the bytes already here
@@ -126,13 +130,16 @@ def download(progress, cancelled, bundle=None):
                             h.update(block)
                             done += len(block)
                             progress(done, total, name)
+                    left = r.length  # what the response still owed: > 0 after a dropped connection, None if unknown
             else:
                 done += have
             size = part.stat().st_size
-            if size < info["bytes"]:  # the connection ended early: the next attempt resumes
+            if size < info["bytes"] and left != 0:  # the connection ended early: the next attempt resumes
                 raise ConnectionError(f"{name}: the download stopped after {size} of {info['bytes']} bytes")
             if size != info["bytes"] or h.hexdigest() != info["sha256"]:
                 part.unlink()
+                if have:  # the bytes kept from an earlier attempt may be the bad ones
+                    raise ValueError(f"the resumed {name} does not match the manifest: the next attempt fetches it whole")
                 raise NoAutoRetry(f"the downloaded {name} does not match the manifest (size or SHA-256)")
             os.replace(part, bundle / name)
         tmp = bundle / "manifest.json.tmp"  # written last, atomically: it marks the bundle complete
