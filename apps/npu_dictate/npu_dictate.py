@@ -1845,7 +1845,7 @@ class App:
 
     def _copy_history(self, index):
         """A click on a history entry (0 = newest): the output thread copies it, as for a dictation."""
-        self.out_q.put((None, self.history_list.items[index]["text"], "clipboard", None))
+        self.out_q.put((None, self.history_list.items[index]["text"], "clipboard", None, False))
         self.history_list.flash(index)
 
     # ---- shortcut ------------------------------------------------------------
@@ -2051,7 +2051,7 @@ class App:
             return
         latency = time.perf_counter() - (s["t_stop"] or time.perf_counter())
         self.out_q.put((session, text + (" " if self.settings["trailing_space"] else ""), self.settings["output"],
-                        s["target"]))
+                        s["target"], s.get("failed")))
         self.history.append({"time": time.strftime("%H:%M"), "text": text})
         del self.history[:-50]
         self._show_history()
@@ -2066,7 +2066,7 @@ class App:
             # messages (WM_DESTROYCLIPBOARD) or another program's copy would wait on it.
             win32.pump_messages()
             try:
-                session, text, mode, target = self.out_q.get(timeout=0.05)
+                session, text, mode, target, failed = self.out_q.get(timeout=0.05)
             except queue.Empty:
                 continue
             self.out_busy = True
@@ -2096,6 +2096,8 @@ class App:
                             time.sleep(0.03)
                             if moved():  # checked right before the keystroke
                                 done = "moved"
+                            elif win32.modifiers_down():  # Shift, Alt or Win pressed since the wait above
+                                done = "held"  # the text stays on the clipboard
                             else:
                                 win32.send_paste()
                                 time.sleep(0.6)  # slow apps read the clipboard late
@@ -2106,6 +2108,9 @@ class App:
                     if moved():
                         win32.set_clipboard(text)
                         done = "moved"
+                    elif win32.modifiers_down():  # with Alt held the characters could trigger menu shortcuts
+                        win32.set_clipboard(text)
+                        done = "held"
                     else:
                         win32.type_text(text)
                 elif done == "clipboard":
@@ -2113,7 +2118,7 @@ class App:
             except Exception as e:
                 err = str(e)
             self.out_busy = False
-            self.post(("output_done", session, done, err))
+            self.post(("output_done", session, done, err, failed))
 
     # ---- event loop ------------------------------------------------------------
     def _poll(self):
@@ -2266,13 +2271,17 @@ class App:
                     self._check_done(session)
             self._refresh()
         elif kind == "output_done":
-            _, session, done, err = ev
+            _, session, done, err, failed = ev
             self.last_active = time.monotonic()
             if session is None:  # copied from the history list
                 self.footer.configure(text=f"Could not copy: {err}" if err else "Copied.")
             elif err:
                 self.overlay.show("error", "Could not insert the text", hold_s=2.0)
                 self.footer.configure(text=f"Insert failed: {err}. The text is in the history.")
+            elif failed:  # the rest went in, but a piece failed on the CPU (_check_done set the footer)
+                self._sound("error")
+                label = {"paste": "Inserted", "type": "Typed", "test": "Test output"}.get(done, "Copied")
+                self.overlay.show("error", f"{label}, but part of the dictation is missing", hold_s=3.0)
             elif done in ("moved", "held"):
                 self.overlay.show("info", "Copied: press Ctrl+V to paste", hold_s=2.5)
                 self.footer.configure(text="The text was copied to the clipboard instead of inserted: "
