@@ -29,7 +29,11 @@ kernel32.GlobalLock.argtypes = [w.HANDLE]
 kernel32.GlobalLock.restype = ctypes.c_void_p
 kernel32.GlobalUnlock.argtypes = [w.HANDLE]
 kernel32.GlobalFree.argtypes = [w.HANDLE]
+kernel32.CreateMutexW.argtypes = [w.LPVOID, w.BOOL, w.LPCWSTR]
 kernel32.CreateMutexW.restype = w.HANDLE
+kernel32.OpenMutexW.argtypes = [w.DWORD, w.BOOL, w.LPCWSTR]
+kernel32.OpenMutexW.restype = w.HANDLE
+kernel32.CloseHandle.argtypes = [w.HANDLE]
 user32.CreateWindowExW.restype = w.HWND
 user32.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int,
                                    ctypes.c_int, ctypes.c_int, w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
@@ -401,6 +405,21 @@ def single_instance(name):
     """False if another process already holds the named mutex."""
     single_instance.handle = kernel32.CreateMutexW(None, False, name)
     return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+
+
+def create_mutex(name):
+    """The handle of a new (or existing) named mutex, not owned. The mutex exists
+    while some process keeps a handle to it; process exit closes the handle."""
+    return kernel32.CreateMutexW(None, False, name)
+
+
+def mutex_exists(name):
+    """True if some process holds a handle to the named mutex."""
+    h = kernel32.OpenMutexW(0x00100000, False, name)  # SYNCHRONIZE
+    if h:
+        kernel32.CloseHandle(h)
+        return True
+    return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED: it exists (made by an elevated process)
 
 
 def set_app_id(app_id):
