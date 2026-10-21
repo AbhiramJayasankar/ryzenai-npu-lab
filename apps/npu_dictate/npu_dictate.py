@@ -1304,6 +1304,7 @@ class App:
         self.busy = None  # (engine gen, start time): NPU work in progress, for the watchdog
         self.last_active = time.monotonic()  # last recording, engine answer or insert: for unload_after_s
         self.downloading = None  # (done, total) bytes while the model downloads
+        self.download_fails = 0  # model downloads in a row that failed with a network error
         self.model_ok = False  # the model files loaded fine in this session
         self.quitting = False
         self.send_lock = threading.Lock()
@@ -1733,9 +1734,11 @@ class App:
                         self.post(("download", done, total))
 
                 model_store.download(progress, lambda: self.quitting)
-                self.post(("download_done", None))
+                self.post(("download_done", None, True))
+            except model_store.NoAutoRetry as e:  # a file that does not match, a full disk
+                self.post(("download_done", str(e), False))
             except Exception as e:
-                self.post(("download_done", f"{type(e).__name__}: {e}"))
+                self.post(("download_done", f"{type(e).__name__}: {e}", True))
 
         threading.Thread(target=run, daemon=True, name="download").start()
 
@@ -2162,7 +2165,14 @@ class App:
                 pass
             elif ev[1] is None and not model_store.missing():
                 log("model downloaded")
+                self.download_fails = 0
                 self._start_model()
+            elif not ev[2]:  # trying again by itself cannot help: only a press does
+                log(f"model download failed (press to retry): {ev[1]}")
+                self.engine_state, self.retry_at = "waiting", None
+                self.engine_msg = f"The model download failed: {ev[1]}. Press the shortcut to try again."
+                self._notify(self.engine_msg)
+                self._refresh()
             elif not self.quitting:
                 log(f"model download failed: {ev[1]}")
                 self.engine_state = "waiting"
@@ -2171,6 +2181,10 @@ class App:
                 self.retry_at = time.monotonic() + delay
                 self.engine_msg = (f"The model download failed ({ev[1]}). It tries again in {delay} s, "
                                    "or when you press the shortcut.")
+                self.download_fails += 1
+                if self.download_fails == 3:
+                    self._notify("The model download failed 3 times. It keeps trying; open NPU Dictate "
+                                 "from the tray for details.")
                 self._refresh()
         elif kind == "engine":
             if ev[1] != self.engine_gen:
