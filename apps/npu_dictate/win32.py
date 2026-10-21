@@ -30,6 +30,14 @@ kernel32.GlobalLock.restype = ctypes.c_void_p
 kernel32.GlobalUnlock.argtypes = [w.HANDLE]
 kernel32.GlobalFree.argtypes = [w.HANDLE]
 kernel32.CreateMutexW.restype = w.HANDLE
+user32.CreateWindowExW.restype = w.HWND
+user32.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int,
+                                   ctypes.c_int, ctypes.c_int, w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
+user32.OpenClipboard.argtypes = [w.HWND]
+user32.EnumClipboardFormats.argtypes = [w.UINT]
+user32.EnumClipboardFormats.restype = w.UINT
+user32.GetClipboardSequenceNumber.restype = w.DWORD
+user32.GetForegroundWindow.restype = w.HWND
 
 # -- key names -----------------------------------------------------------------
 MODS = {"ctrl": 0x2, "alt": 0x1, "shift": 0x4, "win": 0x8}
@@ -109,10 +117,15 @@ class Hotkey(threading.Thread):
         self._ready.wait()
 
     def set(self, combo):
+        if combo:
+            try:
+                parse(combo)
+            except (KeyError, AttributeError):
+                return False  # unknown key name: the current shortcut stays
         self._pending = combo
         self._done.clear()
-        user32.PostThreadMessageW(self.tid, WM_APP + 1, 0, 0)
-        self._done.wait(2.0)
+        if not user32.PostThreadMessageW(self.tid, WM_APP + 1, 0, 0) or not self._done.wait(2.0):
+            return False
         return self._ok
 
     def run(self):
@@ -120,15 +133,25 @@ class Hotkey(threading.Thread):
         msg = w.MSG()
         user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)  # create the message queue
         self._ready.set()
+        current = None
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-            if msg.message == WM_HOTKEY:
-                self.on_press()
-            elif msg.message == WM_APP + 1:
-                user32.UnregisterHotKey(None, 1)
-                self._ok = True
-                if self._pending:
-                    mods, vk = parse(self._pending)
-                    self._ok = bool(user32.RegisterHotKey(None, 1, mods | MOD_NOREPEAT, vk))
+            try:
+                if msg.message == WM_HOTKEY:
+                    self.on_press()
+                elif msg.message == WM_APP + 1:
+                    user32.UnregisterHotKey(None, 1)
+                    self._ok = True
+                    if self._pending:
+                        mods, vk = parse(self._pending)
+                        self._ok = bool(user32.RegisterHotKey(None, 1, mods | MOD_NOREPEAT, vk))
+                    if self._ok:
+                        current = self._pending
+                    elif current:  # taken by another app: keep the shortcut that worked
+                        mods, vk = parse(current)
+                        user32.RegisterHotKey(None, 1, mods | MOD_NOREPEAT, vk)
+                    self._done.set()
+            except Exception:
+                self._ok = False
                 self._done.set()
 
 
@@ -137,33 +160,83 @@ CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x2
 
 
+_owner = threading.local()
+TEXT_FORMATS = {1, 7, 13, 16}  # CF_TEXT, CF_OEMTEXT, CF_UNICODETEXT, CF_LOCALE
+PRIVATE_FORMATS = ("ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory")
+
+
+def _owner_window():
+    """A message-only window of the calling thread. The clipboard needs an owner:
+    after OpenClipboard(NULL) and EmptyClipboard, SetClipboardData fails."""
+    if not getattr(_owner, "hwnd", None):
+        _owner.hwnd = user32.CreateWindowExW(0, "STATIC", "npu-dictate-clipboard", 0, 0, 0, 0, 0,
+                                             w.HWND(-3), None, None, None)  # parent HWND_MESSAGE
+        if not _owner.hwnd:
+            raise OSError(f"could not create the clipboard window (error {ctypes.get_last_error()})")
+    return _owner.hwnd
+
+
+def pump_messages():
+    """Handle the calling thread's pending window messages (the clipboard owner
+    window gets WM_DESTROYCLIPBOARD when another program copies)."""
+    msg = w.MSG()
+    while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):  # PM_REMOVE
+        user32.TranslateMessage(ctypes.byref(msg))
+        user32.DispatchMessageW(ctypes.byref(msg))
+
+
 def _open_clipboard():
-    for _ in range(25):
-        if user32.OpenClipboard(None):
+    hwnd = _owner_window()
+    for _ in range(50):
+        if user32.OpenClipboard(hwnd):
             return True
-        time.sleep(0.02)
+        time.sleep(0.02)  # another program has it open
     return False
 
 
 def _global(data):
     h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+    if not h:
+        raise MemoryError("GlobalAlloc failed")
     p = kernel32.GlobalLock(h)
+    if not p:
+        kernel32.GlobalFree(h)
+        raise MemoryError("GlobalLock failed")
     ctypes.memmove(p, data, len(data))
     kernel32.GlobalUnlock(h)
     return h
 
 
+def _set_data(fmt, data):
+    h = _global(data)
+    if not user32.SetClipboardData(fmt, h):
+        kernel32.GlobalFree(h)  # the system takes ownership only on success
+        return False
+    return True
+
+
 def clipboard_text():
-    """(has_content, text): text is None if the clipboard holds something other than text."""
+    """(has_content, text): text is None unless the clipboard holds plain text only
+    (putting back just the text would lose images, files, HTML or RTF)."""
     if not _open_clipboard():
         return True, None
     try:
-        if not user32.CountClipboardFormats():
+        formats, fmt = set(), 0
+        while True:
+            fmt = user32.EnumClipboardFormats(fmt)
+            if not fmt:
+                break
+            formats.add(fmt)
+        if not formats:
             return False, None
+        if not formats <= TEXT_FORMATS | {user32.RegisterClipboardFormatW(n) for n in PRIVATE_FORMATS}:
+            return True, None
         h = user32.GetClipboardData(CF_UNICODETEXT)
         if not h:
             return True, None
         p = kernel32.GlobalLock(h)
+        if not p:
+            return True, None
         try:
             return True, ctypes.wstring_at(p)
         finally:
@@ -172,18 +245,39 @@ def clipboard_text():
         user32.CloseClipboard()
 
 
+def _replace(text, history):
+    if not user32.EmptyClipboard():
+        raise OSError("could not empty the clipboard")
+    if text is not None and not _set_data(CF_UNICODETEXT, (text + "\0").encode("utf-16-le")):
+        raise OSError("could not put the text on the clipboard")
+    if not history:
+        for name in PRIVATE_FORMATS:
+            _set_data(user32.RegisterClipboardFormatW(name), b"\0\0\0\0")
+
+
 def set_clipboard(text, history=True):
-    """Put text on the clipboard. history=False keeps it out of Win+V clipboard history."""
+    """Put text on the clipboard (None empties it). history=False keeps it out of
+    Win+V clipboard history. Returns the clipboard sequence number of the result;
+    raises OSError if Windows refuses."""
+    if not _open_clipboard():
+        raise OSError("the clipboard is in use by another program")
+    try:
+        _replace(text, history)
+    finally:
+        user32.CloseClipboard()
+    return user32.GetClipboardSequenceNumber()  # read after closing, when the change is complete
+
+
+def restore_clipboard(ours, old):
+    """Put `old` text back (None: empty), but only if the clipboard still holds what
+    set_clipboard() put there (sequence number `ours`): a copy made in the meantime
+    is kept. Checked and replaced while the clipboard is held open."""
     if not _open_clipboard():
         return False
     try:
-        user32.EmptyClipboard()
-        if text is not None:
-            user32.SetClipboardData(CF_UNICODETEXT, _global((text + "\0").encode("utf-16-le")))
-        if not history:
-            for name in ("ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory"):
-                fmt = user32.RegisterClipboardFormatW(name)
-                user32.SetClipboardData(fmt, _global(b"\0\0\0\0"))
+        if user32.GetClipboardSequenceNumber() != ours:
+            return False
+        _replace(old, history=False)
         return True
     finally:
         user32.CloseClipboard()
@@ -216,7 +310,8 @@ def _send(events):
     for i, (vk, scan, flags) in enumerate(events):
         arr[i].type = 1
         arr[i].u.ki = _KEYBDINPUT(vk, scan, flags, 0, 0)
-    return user32.SendInput(len(events), arr, ctypes.sizeof(_INPUT))
+    if user32.SendInput(len(events), arr, ctypes.sizeof(_INPUT)) != len(events):
+        raise OSError("Windows blocked the keystrokes (is that window running as administrator?)")
 
 
 def send_paste():
@@ -242,6 +337,10 @@ def type_text(text):
 GWL_EXSTYLE = -20
 WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW = 0x8, 0x20, 0x80
 WS_EX_LAYERED, WS_EX_NOACTIVATE = 0x80000, 0x08000000
+
+
+def foreground():
+    return user32.GetForegroundWindow()
 
 
 def toplevel_hwnd(tk_window):
@@ -286,3 +385,10 @@ def set_dpi_aware():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # system DPI aware
     except OSError:
         user32.SetProcessDPIAware()
+
+
+def awake_time():
+    """Seconds the computer has been awake (QueryUnbiasedInterruptTime: sleep and hibernation excluded)."""
+    t = ctypes.c_ulonglong()
+    kernel32.QueryUnbiasedInterruptTime(ctypes.byref(t))
+    return t.value / 1e7

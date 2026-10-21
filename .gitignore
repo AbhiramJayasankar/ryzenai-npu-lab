@@ -26,3 +26,7 @@ cache/
 
 # Local logs
 *.log
+
+# Portable app build output
+dist/
+apps/npu_dictate/build/icon.ico
