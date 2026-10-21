@@ -369,6 +369,34 @@ def work_area():
     return r.left, r.top, r.right, r.bottom
 
 
+THEME_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+
+
+def apps_use_light_theme():
+    """The app mode in Settings > Personalization > Colors: False for dark. True if it cannot be read."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, THEME_KEY) as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] != 0
+    except OSError:
+        return True
+
+
+def set_dark_title_bar(hwnd, dark):
+    """Dark or light title bar (DWMWA_USE_IMMERSIVE_DARK_MODE = 20, Windows 10 20H1 and later).
+    Only looks: any failure is ignored."""
+    if not hwnd:
+        return
+    try:
+        value = w.BOOL(bool(dark))
+        ctypes.WinDLL("dwmapi").DwmSetWindowAttribute(w.HWND(hwnd), 20, ctypes.byref(value), ctypes.sizeof(value))
+        # NOSIZE | NOMOVE | NOZORDER | NOACTIVATE | FRAMECHANGED: repaint the title bar now
+        user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x1 | 0x2 | 0x4 | 0x10 | 0x20)
+    except Exception:
+        pass
+
+
 def single_instance(name):
     """False if another process already holds the named mutex."""
     single_instance.handle = kernel32.CreateMutexW(None, False, name)
