@@ -99,6 +99,12 @@ def wait_modifiers_released(timeout=2.0):
     return False
 
 
+def modifiers_down(exclude=("ctrl",)):
+    """Whether a modifier key not in `exclude` is down (by default Shift, Alt or
+    Win: Ctrl is pressed by the synthetic Ctrl+V anyway)."""
+    return any(key_down(v) for m, vks in MOD_VKS.items() if m not in exclude for v in vks)
+
+
 # -- global hotkey ---------------------------------------------------------------
 WM_HOTKEY, WM_APP = 0x0312, 0x8000
 MOD_NOREPEAT = 0x4000
@@ -233,7 +239,10 @@ def clipboard_text():
             formats.add(fmt)
         if not formats:
             return False, None
-        if not formats <= TEXT_FORMATS | {user32.RegisterClipboardFormatW(n) for n in PRIVATE_FORMATS}:
+        private = {user32.RegisterClipboardFormatW(n) for n in PRIVATE_FORMATS}
+        if formats <= private:  # only the markers (1.0.0 left them when it restored an empty clipboard)
+            return False, None
+        if not formats <= TEXT_FORMATS | private:
             return True, None
         h = user32.GetClipboardData(CF_UNICODETEXT)
         if not h:
@@ -254,7 +263,7 @@ def _replace(text, history):
         raise OSError("could not empty the clipboard")
     if text is not None and not _set_data(CF_UNICODETEXT, (text + "\0").encode("utf-16-le")):
         raise OSError("could not put the text on the clipboard")
-    if not history:
+    if not history and text is not None:  # markers on an empty clipboard would read as content
         for name in PRIVATE_FORMATS:
             _set_data(user32.RegisterClipboardFormatW(name), b"\0\0\0\0")
 
