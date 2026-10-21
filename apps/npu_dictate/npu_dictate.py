@@ -29,7 +29,7 @@ import model_store  # noqa: E402
 import win32  # noqa: E402
 
 APP = "NPU Dictate"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 APPDIR = Path(os.environ.get("APPDATA", Path.home())) / APP
 FROZEN = getattr(sys, "frozen", False)
 LAUNCHER = Path(__file__).resolve().parent / "NPU Dictate.ps1"
