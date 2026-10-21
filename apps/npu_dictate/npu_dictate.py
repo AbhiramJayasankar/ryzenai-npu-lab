@@ -66,7 +66,6 @@ STATE_TOKEN = {"loading": "idle", "download": "idle", "unloaded": "idle", "waiti
 COLORS = {k: TOKENS["light"][STATE_TOKEN[k]] for k in STATES}  # the tray icon
 FONT = {}  # "display" and "text" font families, set by pick_fonts()
 _SEMIBOLD = {}  # family -> its installed Semibold family (None if there is none)
-_IMAGES = {}  # images of the flat notebook elements: kept alive, recolored on a theme switch
 
 
 def blend(color, base, amount):
@@ -107,23 +106,6 @@ def font(kind, size, semibold=False):
         return (family, size)
     face = _SEMIBOLD.get(family)
     return (face, size) if face else (family, size, "bold")
-
-
-def _flat_notebook_images(root, st, tok):
-    """Image elements of Flat.TNotebook: the tab (a 2 px accent underline when selected, then a gap to the
-    next tab) and the client area (a 1 px line along its top, under the tab row)."""
-    gap, under, rule = px(20), px(2), px(1)
-    if "Flat.Notebook.tab" not in st.element_names():
-        _IMAGES.update(tab=tk.PhotoImage(master=root, width=1 + gap, height=1 + under),
-                       tab_on=tk.PhotoImage(master=root, width=1 + gap, height=1 + under),
-                       rule=tk.PhotoImage(master=root, width=1, height=rule + 1))
-        st.element_create("Flat.Notebook.tab", "image", _IMAGES["tab"], ("selected", _IMAGES["tab_on"]),
-                          border=(0, 0, gap, under), sticky="nswe")
-        st.element_create("Flat.Notebook.client", "image", _IMAGES["rule"], border=(0, rule, 0, 0), sticky="nswe")
-    _IMAGES["tab_on"].blank()
-    _IMAGES["tab_on"].put(tok["accent"], to=(0, 1, 1, 1 + under))
-    _IMAGES["rule"].blank()
-    _IMAGES["rule"].put(tok["line"], to=(0, 0, 1, rule))
 
 
 def _recolor_lists(root, opts):
@@ -206,19 +188,6 @@ def build_style(root, tok):
     st.map("Vertical.TScrollbar", background=thumb, lightcolor=thumb, darkcolor=thumb)
     st.configure("Page.Vertical.TScrollbar", troughcolor=bg, bordercolor=bg)
 
-    # Flat notebook: text tabs, the selected one in ink over a 2 px accent underline, the others muted; a 1 px
-    # line runs under the whole tab row (do not add another divider there). No tab or client border box.
-    _flat_notebook_images(root, st, tok)
-    st.configure("Flat.TNotebook", background=bg, borderwidth=0, padding=0, tabmargins=0, tabposition="nw")
-    st.layout("Flat.TNotebook", [("Flat.Notebook.client", {"sticky": "nswe"})])
-    tab_pad = (0, px(4), 0, px(6))
-    st.configure("Flat.TNotebook.Tab", background=bg, foreground=muted, font=text, padding=tab_pad)
-    st.map("Flat.TNotebook.Tab", foreground=[("selected", ink), ("active", ink), ("", muted)],
-           background=[("", bg)], padding=[("", tab_pad)], expand=[("", 0)])
-    st.layout("Flat.TNotebook.Tab", [("Flat.Notebook.tab", {"sticky": "nswe", "children": [
-        ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
-            ("Notebook.focus", {"side": "top", "sticky": "nswe", "children": [
-                ("Notebook.label", {"side": "top", "sticky": ""})]})]})]})])
 
 
 # -- settings, sounds, icon ------------------------------------------------------
@@ -1036,6 +1005,75 @@ class Segmented(tk.Frame):
                         highlightbackground=fill, highlightcolor=tok["surface"] if on else tok["accent"])
 
 
+class FlatTabs(ttk.Frame):
+    """Text tabs: the selected one in ink over a 2 px accent underline, the others muted (ink on
+    hover), and a 1 px line under the tab row. Built from plain widgets: a ttk.Notebook drawn with
+    image elements kept Tk repainting on Windows, so no timer ran while the window was open."""
+
+    UNDER, GAP = 2, 20
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self.row = ttk.Frame(self)
+        self.row.pack(fill="x")
+        self.rule = tk.Frame(self, height=px(1), bd=0, highlightthickness=0)
+        self.rule.pack(fill="x")
+        self.body = ttk.Frame(self)
+        self.body.pack(fill="both", expand=True)
+        self.tabs, self.pages, self.current, self.hover = [], [], None, None
+        app.themed.append(self)
+
+    def add(self, text, padding=(0, 0, 0, 0)):
+        """A new tab; returns its page (a ttk.Frame) to fill."""
+        i = len(self.tabs)
+        cell = tk.Frame(self.row, bd=0, highlightthickness=0)
+        cell.pack(side="left", padx=(0, px(self.GAP)))
+        label = tk.Label(cell, text=text, font=font("text", 10), bd=0, padx=px(2), pady=0, cursor="hand2",
+                         takefocus=1, highlightthickness=1)
+        label.pack(pady=(px(4), px(6)))
+        bar = tk.Frame(cell, height=px(self.UNDER), bd=0, highlightthickness=0)
+        bar.pack(fill="x")
+        for w in (cell, label, bar):
+            w.bind("<Button-1>", lambda e, i=i: self.select(i, focus=True))
+            w.bind("<Enter>", lambda e, i=i: self._hover(i))
+            w.bind("<Leave>", lambda e: self._hover(None))
+        for seq in ("<Return>", "<space>"):
+            label.bind(seq, lambda e, i=i: self.select(i))
+        label.bind("<Left>", lambda e: self.select((self.current - 1) % len(self.tabs), focus=True))
+        label.bind("<Right>", lambda e: self.select((self.current + 1) % len(self.tabs), focus=True))
+        page = ttk.Frame(self.body, padding=padding)
+        self.tabs.append((cell, label, bar))
+        self.pages.append(page)
+        if self.current is None:
+            self.select(0)
+        self.apply_theme(self.app.tok)
+        return page
+
+    def select(self, i, focus=False):
+        if i != self.current:
+            if self.current is not None:
+                self.pages[self.current].pack_forget()
+            self.current = i
+            self.pages[i].pack(fill="both", expand=True)
+            self.apply_theme(self.app.tok)
+        if focus:
+            self.tabs[i][1].focus_set()
+
+    def _hover(self, i):
+        self.hover = i
+        self.apply_theme(self.app.tok)
+
+    def apply_theme(self, tok):
+        self.rule.configure(bg=tok["line"])
+        for i, (cell, label, bar) in enumerate(self.tabs):
+            on = i == self.current
+            cell.configure(bg=tok["bg"])
+            label.configure(bg=tok["bg"], fg=tok["ink"] if on or i == self.hover else tok["muted"],
+                            activebackground=tok["bg"], highlightbackground=tok["bg"], highlightcolor=tok["accent"])
+            bar.configure(bg=tok["accent"] if on else tok["bg"])
+
+
 class ScrollFrame(ttk.Frame):
     """A vertically scrolling area on the window background: put widgets in .inner.
     The scrollbar shows only when the content is taller than the area; the mouse
@@ -1482,13 +1520,11 @@ class App:
         self.footer.pack(side="bottom", fill="x", pady=(px(8), 0))
         ttk.Frame(outer, style="Divider.TFrame", height=px(1)).pack(side="bottom", fill="x", pady=(px(8), 0))
 
-        nb = ttk.Notebook(outer, style="Flat.TNotebook")
-        nb.pack(fill="both", expand=True, pady=(px(18), 0))
-        page = ttk.Frame(nb)
-        nb.add(page, text="Settings")
+        self.tabs = FlatTabs(outer, self)
+        self.tabs.pack(fill="both", expand=True, pady=(px(18), 0))
+        page = self.tabs.add("Settings")
         self._build_settings(page)
-        page = ttk.Frame(nb)
-        nb.add(page, text="History", padding=(0, px(12), 0, 0))
+        page = self.tabs.add("History", padding=(0, px(12), 0, 0))
         self.history_hint = ttk.Label(page, text="Click an entry to copy it.", style="Muted.TLabel")
         self.history_list = HistoryList(page, self, self._copy_history)
         self.history_list.pack(fill="both", expand=True)
