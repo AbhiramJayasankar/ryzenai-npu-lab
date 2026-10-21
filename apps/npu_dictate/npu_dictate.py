@@ -44,6 +44,7 @@ STATES = {"loading": "Loading", "download": "Downloading", "waiting": "Waiting",
 WATCHDOG_S = 30.0  # NPU work (a piece, or the warm-up) must finish this soon
 START_TIMEOUT_S = 60.0  # the engine must reach the NPU this soon after it is spawned (sleep not counted)
 RETRY_S = (10, 30, 60, 120, 300)  # waits between attempts to load the model
+MIC_REFRESH_MS = 20000  # how often the microphone list is read again while idle (~40 ms each)
 S = 1.0  # display scale (DPI / 96), set when the window is created
 
 
@@ -1414,6 +1415,7 @@ class App:
             self.root.deiconify()
         self.root.after(20, self._poll)
         self.root.after(3000, self._poll_theme)
+        self.root.after(MIC_REFRESH_MS, self._mic_tick)
         if os.environ.get("NPU_DICTATE_TEST_QUIT_AFTER"):  # test hook
             self.root.after(int(float(os.environ["NPU_DICTATE_TEST_QUIT_AFTER"]) * 1000), self.quit)
         for item in filter(None, os.environ.get("NPU_DICTATE_TEST_EVENTS", "").split(",")):  # test hook: "s:event"
@@ -1797,6 +1799,15 @@ class App:
         threading.Thread(target=run, daemon=True, name="download").start()
 
     # ---- settings ---------------------------------------------------------------
+    def _mic_tick(self):
+        """Reads the devices again every MIC_REFRESH_MS while nothing records, so a
+        microphone connected later is there at the next press without delaying it."""
+        if self.quitting:
+            return
+        if not self.recording and self.recorder.idle():
+            refresh_devices()
+        self.root.after(MIC_REFRESH_MS, self._mic_tick)
+
     def _fill_mics(self, wait_s=0.0):
         """Fills the microphone list, read again from Windows when no stream is open or
         closing (one closing is waited for up to wait_s). A saved microphone that is
@@ -2074,7 +2085,6 @@ class App:
         self.sessions[self.session] = {"n": None, "parts": {}, "npu": 0.0, "t_stop": None, "seconds": 0.0,
                                        "target": None, "failed": False}
         try:
-            self._fill_mics(3.0)  # read the microphones again: one may have been connected or removed
             self.recorder.start(self.session, device_index(self.settings["microphone"]))
         except Exception as e:
             self._sound("error")
