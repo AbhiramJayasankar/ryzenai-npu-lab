@@ -1,0 +1,1197 @@
+{
+ "experiment": "014",
+ "date": "2026-11-16",
+ "lead1_power_modes": [
+  {
+   "label": "default",
+   "header": [
+    "### 2026-11-16T22:04:07 label=default Power Mode             : Default free_ram_gb=1.34 battery_status=2 charge=79",
+    "### 2026-11-16T22:06:35 label=default Power Mode             : Default free_ram_gb=3.34 battery_status=2 charge=79"
+   ],
+   "health": {
+    "median_step_ms": 17.003,
+    "max_errors": {
+     "hidden": 0.25,
+     "state": 0.09375,
+     "kv": 0.15625
+    },
+    "mismatches": [
+     [
+      7,
+      18569,
+      5642
+     ]
+    ]
+   },
+   "decode": {
+    "median_step_ms": [
+     16.953,
+     16.987,
+     16.967
+    ],
+    "ms_per_position": [
+     21.81,
+     17.99,
+     18.02
+    ],
+    "mismatches": [
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ]
+    ]
+   },
+   "bw4": {
+    "median_ms": 4.859,
+    "gb_per_s": 13.81,
+    "check": 1.0
+   },
+   "bw8": {
+    "median_ms": 3.868,
+    "gb_per_s": 17.35,
+    "check": 1.0
+   },
+   "dma64m": {
+    "run_ms": 4.5464,
+    "p10": 4.4351,
+    "p90": 4.6771,
+    "ok": true,
+    "gbps": 29.52,
+    "gmacs": 0
+   },
+   "core1_16m": {
+    "run_ms": 3.2125,
+    "p10": 3.1366,
+    "p90": 3.2986,
+    "ok": true,
+    "gbps": 10.44,
+    "gmacs": 0
+   },
+   "gemm_bf16": {
+    "run_ms": 1.3775,
+    "p10": 1.347,
+    "p90": 1.4317,
+    "ok": true,
+    "gbps": 6.09,
+    "gmacs": 779.5
+   },
+   "gemm_i8": {
+    "run_ms": 0.6891,
+    "p10": 0.6725,
+    "p90": 0.7278,
+    "ok": true,
+    "gbps": 9.13,
+    "gmacs": 1558.2
+   },
+   "call": {
+    "one_time": {},
+    "call_split": {
+     "total": 121.9,
+     "submit_returns": 27.1,
+     "wait": 94.7
+    },
+    "reused_run": {
+     "total": 94.5,
+     "start_returns": 6.0,
+     "wait": 88.4
+    },
+    "python_binding": {
+     "trivial_pyxrt_call": 0.6,
+     "empty_timer_pair": 0.0
+    },
+    "bo_sync": {
+     "to_device": 60.8,
+     "from_device": 61.9
+    }
+   },
+   "vbench": {
+    "exp16": 171,
+    "sigmoid": 258,
+    "swish": 287,
+    "vmul": 65,
+    "bf16 round trip": 17
+   },
+   "encoder": {
+    "runs_ms": [
+     200.05,
+     200.05,
+     193.37
+    ],
+    "frames": 98,
+    "npu_ms": 193.4,
+    "cosine": 0.999939,
+    "rel_rms": 0.01106,
+    "same_text": true
+   },
+   "context": {
+    "decode_step_ms": {
+     "32": 17.28,
+     "64": 17.66,
+     "128": 17.77,
+     "256": 18.55,
+     "512": 20.23,
+     "1024": 23.68,
+     "2048": 29.18,
+     "3072": 35.62,
+     "4090": 38.48
+    },
+    "mean_prompt_step_ms": 24.65
+   }
+  },
+  {
+   "label": "performance",
+   "header": [
+    "### 2026-11-16T22:08:40 label=performance Power Mode             : Performance free_ram_gb=3.08 battery_status=2 charge=79"
+   ],
+   "health": {
+    "median_step_ms": 18.364,
+    "max_errors": {
+     "hidden": 0.25,
+     "state": 0.09375,
+     "kv": 0.15625
+    },
+    "mismatches": [
+     [
+      7,
+      18569,
+      5642
+     ]
+    ]
+   },
+   "decode": {
+    "median_step_ms": [
+     18.188,
+     18.411,
+     18.366
+    ],
+    "ms_per_position": [
+     19.58,
+     19.63,
+     19.56
+    ],
+    "mismatches": [
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ]
+    ]
+   },
+   "bw4": {
+    "median_ms": 4.989,
+    "gb_per_s": 13.45,
+    "check": 1.0
+   },
+   "bw8": {
+    "median_ms": 3.826,
+    "gb_per_s": 17.54,
+    "check": 1.0
+   },
+   "dma64m": {
+    "run_ms": 4.9142,
+    "p10": 4.6456,
+    "p90": 5.51,
+    "ok": true,
+    "gbps": 27.31,
+    "gmacs": 0
+   },
+   "core1_16m": {
+    "run_ms": 3.1181,
+    "p10": 3.0592,
+    "p90": 3.2788,
+    "ok": true,
+    "gbps": 10.76,
+    "gmacs": 0
+   },
+   "gemm_bf16": {
+    "run_ms": 1.2702,
+    "p10": 1.2397,
+    "p90": 1.3311,
+    "ok": true,
+    "gbps": 6.6,
+    "gmacs": 845.3
+   },
+   "gemm_i8": {
+    "run_ms": 0.707,
+    "p10": 0.6773,
+    "p90": 0.7683,
+    "ok": true,
+    "gbps": 8.9,
+    "gmacs": 1518.7
+   },
+   "call": {
+    "one_time": {},
+    "call_split": {
+     "total": 129.8,
+     "submit_returns": 28.8,
+     "wait": 99.3
+    },
+    "reused_run": {
+     "total": 101.8,
+     "start_returns": 7.2,
+     "wait": 94.8
+    },
+    "python_binding": {
+     "trivial_pyxrt_call": 0.4,
+     "empty_timer_pair": 0.0
+    },
+    "bo_sync": {
+     "to_device": 63.5,
+     "from_device": 63.6
+    }
+   },
+   "vbench": {
+    "exp16": 172,
+    "sigmoid": 265,
+    "swish": 287,
+    "vmul": 64,
+    "bf16 round trip": 20
+   },
+   "encoder": {
+    "runs_ms": [
+     199.97,
+     197.63,
+     198.63
+    ],
+    "frames": 98,
+    "npu_ms": 197.6,
+    "cosine": 0.999939,
+    "rel_rms": 0.01106,
+    "same_text": true
+   },
+   "context": {
+    "decode_step_ms": {
+     "32": 18.01,
+     "64": 17.54,
+     "128": 17.94,
+     "256": 18.66,
+     "512": 20.19,
+     "1024": 23.81,
+     "2048": 30.37,
+     "3072": 32.64,
+     "4090": 41.43
+    },
+    "mean_prompt_step_ms": 24.51
+   }
+  },
+  {
+   "label": "default_after",
+   "header": [
+    "### 2026-11-16T22:13:06 label=default_after Power Mode             : Default free_ram_gb=3.22 battery_status=2 charge=79"
+   ],
+   "health": {
+    "median_step_ms": 17.332,
+    "max_errors": {
+     "hidden": 0.25,
+     "state": 0.09375,
+     "kv": 0.15625
+    },
+    "mismatches": [
+     [
+      7,
+      18569,
+      5642
+     ]
+    ]
+   },
+   "decode": {
+    "median_step_ms": [
+     18.183,
+     17.916,
+     18.173
+    ],
+    "ms_per_position": [
+     19.56,
+     19.06,
+     19.35
+    ],
+    "mismatches": [
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ]
+    ]
+   },
+   "bw4": {
+    "median_ms": 5.307,
+    "gb_per_s": 12.64,
+    "check": 1.0
+   },
+   "bw8": {
+    "median_ms": 3.848,
+    "gb_per_s": 17.44,
+    "check": 1.0
+   },
+   "dma64m": {
+    "run_ms": 4.7862,
+    "p10": 4.5908,
+    "p90": 5.2941,
+    "ok": true,
+    "gbps": 28.04,
+    "gmacs": 0
+   },
+   "core1_16m": {
+    "run_ms": 3.1333,
+    "p10": 3.0668,
+    "p90": 3.6382,
+    "ok": true,
+    "gbps": 10.71,
+    "gmacs": 0
+   },
+   "gemm_bf16": {
+    "run_ms": 1.3318,
+    "p10": 1.2993,
+    "p90": 1.3968,
+    "ok": true,
+    "gbps": 6.3,
+    "gmacs": 806.2
+   },
+   "gemm_i8": {
+    "run_ms": 0.7175,
+    "p10": 0.6916,
+    "p90": 0.7687,
+    "ok": true,
+    "gbps": 8.77,
+    "gmacs": 1496.5
+   },
+   "call": {
+    "one_time": {},
+    "call_split": {
+     "total": 114.7,
+     "submit_returns": 26.6,
+     "wait": 88.1
+    },
+    "reused_run": {
+     "total": 94.3,
+     "start_returns": 6.1,
+     "wait": 88.0
+    },
+    "python_binding": {
+     "trivial_pyxrt_call": 0.4,
+     "empty_timer_pair": 0.0
+    },
+    "bo_sync": {
+     "to_device": 62.2,
+     "from_device": 61.9
+    }
+   },
+   "vbench": {
+    "exp16": 169,
+    "sigmoid": 256,
+    "swish": 284,
+    "vmul": 60,
+    "bf16 round trip": 19
+   },
+   "encoder": {
+    "runs_ms": [
+     204.78,
+     200.94,
+     197.33
+    ],
+    "frames": 98,
+    "npu_ms": 197.3,
+    "cosine": 0.999939,
+    "rel_rms": 0.01106,
+    "same_text": true
+   },
+   "context": {
+    "decode_step_ms": {
+     "32": 17.44,
+     "64": 17.88,
+     "128": 18.09,
+     "256": 19.31,
+     "512": 19.89,
+     "1024": 24.25,
+     "2048": 30.35,
+     "3072": 35.36,
+     "4090": 37.55
+    },
+    "mean_prompt_step_ms": 24.71
+   }
+  },
+  {
+   "label": "turbo",
+   "header": [
+    "### 2026-11-16T22:22:25 label=turbo Power Mode             : Turbo free_ram_gb=3.47 battery_status=2 charge=79"
+   ],
+   "health": {
+    "median_step_ms": 18.026,
+    "max_errors": {
+     "hidden": 0.25,
+     "state": 0.09375,
+     "kv": 0.15625
+    },
+    "mismatches": [
+     [
+      7,
+      18569,
+      5642
+     ]
+    ]
+   },
+   "decode": {
+    "median_step_ms": [
+     17.621,
+     17.609,
+     17.678
+    ],
+    "ms_per_position": [
+     18.73,
+     18.51,
+     18.5
+    ],
+    "mismatches": [
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ],
+     [
+      [
+       7,
+       18569,
+       5642
+      ]
+     ]
+    ]
+   },
+   "bw4": {
+    "median_ms": 4.607,
+    "gb_per_s": 14.57,
+    "check": 1.0
+   },
+   "bw8": {
+    "median_ms": 3.594,
+    "gb_per_s": 18.67,
+    "check": 1.0
+   },
+   "dma64m": {
+    "run_ms": 4.6116,
+    "p10": 4.4906,
+    "p90": 4.6678,
+    "ok": true,
+    "gbps": 29.1,
+    "gmacs": 0
+   },
+   "core1_16m": {
+    "run_ms": 3.0257,
+    "p10": 2.9985,
+    "p90": 3.0749,
+    "ok": true,
+    "gbps": 11.09,
+    "gmacs": 0
+   },
+   "gemm_bf16": {
+    "run_ms": 1.237,
+    "p10": 1.2035,
+    "p90": 1.296,
+    "ok": true,
+    "gbps": 6.78,
+    "gmacs": 868.0
+   },
+   "gemm_i8": {
+    "run_ms": 0.6935,
+    "p10": 0.6627,
+    "p90": 0.7245,
+    "ok": true,
+    "gbps": 9.07,
+    "gmacs": 1548.3
+   },
+   "call": {
+    "one_time": {},
+    "call_split": {
+     "total": 107.5,
+     "submit_returns": 26.6,
+     "wait": 80.0
+    },
+    "reused_run": {
+     "total": 85.7,
+     "start_returns": 6.2,
+     "wait": 79.4
+    },
+    "python_binding": {
+     "trivial_pyxrt_call": 0.4,
+     "empty_timer_pair": 0.0
+    },
+    "bo_sync": {
+     "to_device": 69.4,
+     "from_device": 65.9
+    }
+   },
+   "vbench": {
+    "exp16": 170,
+    "sigmoid": 257,
+    "swish": 289,
+    "vmul": 61,
+    "bf16 round trip": 18
+   },
+   "encoder": {
+    "runs_ms": [
+     197.48,
+     192.91,
+     192.9
+    ],
+    "frames": 98,
+    "npu_ms": 192.9,
+    "cosine": 0.999939,
+    "rel_rms": 0.01106,
+    "same_text": true
+   },
+   "context": {
+    "decode_step_ms": {
+     "32": 17.21,
+     "64": 17.42,
+     "128": 17.4,
+     "256": 17.99,
+     "512": 19.44,
+     "1024": 21.8,
+     "2048": 27.57,
+     "3072": 32.16,
+     "4090": 37.21
+    },
+    "mean_prompt_step_ms": 22.84
+   }
+  }
+ ],
+ "lead2_gemm": {
+  "weights_per_layer": 24117248,
+  "weight_bytes_bf16": 48234496,
+  "gemm_phases": [
+   {
+    "frames": 128,
+    "measured_ms": 3.7,
+    "macs": 3087007744,
+    "tmacs": 0.834,
+    "ddr_bytes_read": 96468992,
+    "ddr_gb_per_s": 26.1
+   },
+   {
+    "frames": 256,
+    "measured_ms": 6.3,
+    "macs": 6174015488,
+    "tmacs": 0.98,
+    "ddr_bytes_read": 192937984,
+    "ddr_gb_per_s": 30.6
+   },
+   {
+    "frames": 384,
+    "measured_ms": 9.6,
+    "macs": 9261023232,
+    "tmacs": 0.965,
+    "ddr_bytes_read": 289406976,
+    "ddr_gb_per_s": 30.1
+   }
+  ],
+  "per_core_stream_limit_macs_per_cycle": 64,
+  "estimate_x_reuse_2_chunks_ms_per_layer_128": [
+   2.6,
+   3.0
+  ],
+  "estimate_encoder_saving_ms": [
+   17,
+   26
+  ],
+  "taka_et_al": {
+   "cores": 16,
+   "bf16_tile": "96x56x96",
+   "bf16_output": true,
+   "power_mode": "turbo",
+   "clock_ghz": 1.0,
+   "ddr_gb_per_s": 15,
+   "bf16_tmacs": 1.56,
+   "int8_tmacs": 3.26,
+   "best_size": "4224x4032x4224 (bf16)",
+   "code_published": false
+  }
+ },
+ "lead3_parakeet": {
+  "utterances": 210,
+  "frames": 21716,
+  "variants": {
+   "fp32": {
+    "wer": 0.0219,
+    "errors": 100,
+    "words": 4566,
+    "identical_to_onnx_fp32": 210,
+    "word_diff_vs_onnx_fp32": 0.0,
+    "after_2_layers": {
+     "rel_rms": 0.0,
+     "cosine": 1.0
+    },
+    "output": {
+     "rel_rms": 0.0,
+     "cosine": 1.0
+    },
+    "per_layer_rel_rms": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "bf16": {
+    "wer": 0.0219,
+    "errors": 100,
+    "words": 4566,
+    "identical_to_onnx_fp32": 208,
+    "word_diff_vs_onnx_fp32": 0.0,
+    "after_2_layers": {
+     "rel_rms": 0.00165,
+     "cosine": 0.999999
+    },
+    "output": {
+     "rel_rms": 0.00805,
+     "cosine": 0.999968
+    },
+    "per_layer_rel_rms": [
+     0.00129,
+     0.00165,
+     0.00193,
+     0.00204,
+     0.00206,
+     0.00207,
+     0.00214,
+     0.00225,
+     0.00234,
+     0.00258,
+     0.00291,
+     0.00305,
+     0.00311,
+     0.00304,
+     0.00288,
+     0.00262,
+     0.00275,
+     0.00257,
+     0.00253,
+     0.00254,
+     0.00292,
+     0.00424,
+     0.00634,
+     0.00805
+    ]
+   },
+   "w8c": {
+    "wer": 0.02146,
+    "errors": 98,
+    "words": 4566,
+    "identical_to_onnx_fp32": 202,
+    "word_diff_vs_onnx_fp32": 0.00066,
+    "after_2_layers": {
+     "rel_rms": 0.00938,
+     "cosine": 0.999956
+    },
+    "output": {
+     "rel_rms": 0.04135,
+     "cosine": 0.999146
+    },
+    "per_layer_rel_rms": [
+     0.00766,
+     0.00938,
+     0.01036,
+     0.01136,
+     0.01147,
+     0.01131,
+     0.01132,
+     0.01145,
+     0.01121,
+     0.01135,
+     0.01192,
+     0.01231,
+     0.01276,
+     0.0132,
+     0.01274,
+     0.01183,
+     0.01238,
+     0.01159,
+     0.01156,
+     0.01175,
+     0.01381,
+     0.02228,
+     0.03446,
+     0.04135
+    ],
+    "weight_rel_rms": {
+     "feed_forward1.w1": 0.0087,
+     "feed_forward1.w2": 0.01197,
+     "att.wq": 0.00831,
+     "att.wk": 0.00875,
+     "att.wv": 0.00829,
+     "att.wout": 0.00824,
+     "conv.pw1": 0.00865,
+     "conv.pw2": 0.00884,
+     "feed_forward2.w1": 0.00851,
+     "feed_forward2.w2": 0.01152
+    }
+   },
+   "w8g128": {
+    "wer": 0.0219,
+    "errors": 100,
+    "words": 4566,
+    "identical_to_onnx_fp32": 207,
+    "word_diff_vs_onnx_fp32": 0.0,
+    "after_2_layers": {
+     "rel_rms": 0.00606,
+     "cosine": 0.999982
+    },
+    "output": {
+     "rel_rms": 0.02962,
+     "cosine": 0.999561
+    },
+    "per_layer_rel_rms": [
+     0.00404,
+     0.00606,
+     0.00705,
+     0.00802,
+     0.00812,
+     0.00828,
+     0.00824,
+     0.00827,
+     0.00812,
+     0.00828,
+     0.00887,
+     0.00916,
+     0.0095,
+     0.00977,
+     0.0094,
+     0.00871,
+     0.00912,
+     0.0086,
+     0.00861,
+     0.00885,
+     0.01049,
+     0.01658,
+     0.02494,
+     0.02962
+    ],
+    "weight_rel_rms": {
+     "feed_forward1.w1": 0.00685,
+     "feed_forward1.w2": 0.00764,
+     "att.wq": 0.00668,
+     "att.wk": 0.00683,
+     "att.wv": 0.00669,
+     "att.wout": 0.00649,
+     "conv.pw1": 0.0068,
+     "conv.pw2": 0.0069,
+     "feed_forward2.w1": 0.00679,
+     "feed_forward2.w2": 0.00744
+    }
+   },
+   "w8a8t": {
+    "wer": 0.02168,
+    "errors": 99,
+    "words": 4566,
+    "identical_to_onnx_fp32": 189,
+    "word_diff_vs_onnx_fp32": 0.00153,
+    "after_2_layers": {
+     "rel_rms": 0.03728,
+     "cosine": 0.999305
+    },
+    "output": {
+     "rel_rms": 0.10561,
+     "cosine": 0.994606
+    },
+    "per_layer_rel_rms": [
+     0.01329,
+     0.03728,
+     0.04686,
+     0.05303,
+     0.05498,
+     0.06058,
+     0.06016,
+     0.06208,
+     0.06208,
+     0.06108,
+     0.06211,
+     0.06082,
+     0.05998,
+     0.0602,
+     0.05792,
+     0.05294,
+     0.05312,
+     0.04788,
+     0.0456,
+     0.04427,
+     0.05189,
+     0.06392,
+     0.08769,
+     0.10561
+    ],
+    "act_absmax": {
+     "feed_forward1.w1": 13.25,
+     "feed_forward1.w2": 92.29,
+     "att.wq": 0.92,
+     "att.wk": 0.92,
+     "att.wv": 0.92,
+     "att.wout": 15.54,
+     "conv.pw1": 7.05,
+     "conv.pw2": 90.39,
+     "feed_forward2.w1": 16.94,
+     "feed_forward2.w2": 127.19
+    }
+   },
+   "w8a8s": {
+    "wer": 0.02256,
+    "errors": 103,
+    "words": 4566,
+    "identical_to_onnx_fp32": 171,
+    "word_diff_vs_onnx_fp32": 0.00328,
+    "after_2_layers": {
+     "rel_rms": 0.04991,
+     "cosine": 0.998754
+    },
+    "output": {
+     "rel_rms": 0.17717,
+     "cosine": 0.985317
+    },
+    "per_layer_rel_rms": [
+     0.02066,
+     0.04991,
+     0.06522,
+     0.07504,
+     0.08215,
+     0.09421,
+     0.09657,
+     0.1007,
+     0.1026,
+     0.10185,
+     0.10413,
+     0.10363,
+     0.10576,
+     0.10809,
+     0.10642,
+     0.09723,
+     0.0998,
+     0.08967,
+     0.0841,
+     0.08139,
+     0.08908,
+     0.106,
+     0.14204,
+     0.17717
+    ],
+    "act_absmax": {
+     "feed_forward1.w1": 13.19,
+     "feed_forward1.w2": 92.23,
+     "att.wq": 0.93,
+     "att.wk": 0.93,
+     "att.wv": 0.93,
+     "att.wout": 15.65,
+     "conv.pw1": 7.05,
+     "conv.pw2": 90.43,
+     "feed_forward2.w1": 17.09,
+     "feed_forward2.w2": 127.44
+    }
+   }
+  }
+ },
+ "lead3_lfm25": {
+  "bf16": {
+   "weight_rel_rms": 0.0,
+   "embedding_rel_rms": 0.0,
+   "fixture": {
+    "hidden_max_abs_err": 0.125,
+    "hidden_rel_rms": 0.00674,
+    "argmax_mismatch_positions": []
+   },
+   "text": {
+    "tokens": 7703,
+    "perplexity": 119.4006
+   },
+   "seconds": 34.3,
+   "greedy": [
+    {
+     "prompt": "What is an NPU?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 48
+    },
+    {
+     "prompt": "Explain in two sentences why the sky is blue.",
+     "tokens": 48,
+     "first_diff_vs_transformers": 14
+    },
+    {
+     "prompt": "Here is some context about laptop processors. The AMD Ryzen 9 8945HS combines eight Zen 4 CPU cores, a Radeon 780M integrated GPU and an XDNA neural processing unit. The NPU is a spatial array of AI Engine tiles; each compute tile has its own small local memory, and data moves between tiles and main memory through programmable DMA engines. Small language models are limited mostly by how quickly their weights can be read from memory, because each generated token needs every weight once. The GPU has more memory bandwidth than the NPU, while the NPU uses less power. Question: based only on this context, which part of the chip is likely to generate text fastest for a single user, and why?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 48
+    }
+   ]
+  },
+  "fp32act": {
+   "weight_rel_rms": 0.0,
+   "embedding_rel_rms": 0.0,
+   "fixture": {
+    "hidden_max_abs_err": 0.7172,
+    "hidden_rel_rms": 0.01546,
+    "argmax_mismatch_positions": [],
+    "hidden_rel_rms_vs_bf16": 0.01459
+   },
+   "text": {
+    "tokens": 7703,
+    "perplexity": 119.3224,
+    "top1_agreement_with_bf16": 0.98793,
+    "mean_kl_to_bf16": 0.000302
+   },
+   "seconds": 47.4,
+   "greedy": [
+    {
+     "prompt": "What is an NPU?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 48,
+     "first_diff_vs_bf16": 48
+    },
+    {
+     "prompt": "Explain in two sentences why the sky is blue.",
+     "tokens": 48,
+     "first_diff_vs_transformers": 14,
+     "first_diff_vs_bf16": 48
+    },
+    {
+     "prompt": "Here is some context about laptop processors. The AMD Ryzen 9 8945HS combines eight Zen 4 CPU cores, a Radeon 780M integrated GPU and an XDNA neural processing unit. The NPU is a spatial array of AI Engine tiles; each compute tile has its own small local memory, and data moves between tiles and main memory through programmable DMA engines. Small language models are limited mostly by how quickly their weights can be read from memory, because each generated token needs every weight once. The GPU has more memory bandwidth than the NPU, while the NPU uses less power. Question: based only on this context, which part of the chip is likely to generate text fastest for a single user, and why?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 48,
+     "first_diff_vs_bf16": 48
+    }
+   ]
+  },
+  "w8c": {
+   "weight_rel_rms": 0.00914,
+   "embedding_rel_rms": 0.00839,
+   "fixture": {
+    "hidden_max_abs_err": 0.375,
+    "hidden_rel_rms": 0.02014,
+    "argmax_mismatch_positions": [
+     7,
+     8,
+     14
+    ],
+    "hidden_rel_rms_vs_bf16": 0.02032
+   },
+   "text": {
+    "tokens": 7703,
+    "perplexity": 120.6488,
+    "top1_agreement_with_bf16": 0.9617,
+    "mean_kl_to_bf16": 0.002701
+   },
+   "seconds": 50.8,
+   "greedy": [
+    {
+     "prompt": "What is an NPU?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 21,
+     "first_diff_vs_bf16": 21
+    },
+    {
+     "prompt": "Explain in two sentences why the sky is blue.",
+     "tokens": 48,
+     "first_diff_vs_transformers": 5,
+     "first_diff_vs_bf16": 5
+    },
+    {
+     "prompt": "Here is some context about laptop processors. The AMD Ryzen 9 8945HS combines eight Zen 4 CPU cores, a Radeon 780M integrated GPU and an XDNA neural processing unit. The NPU is a spatial array of AI Engine tiles; each compute tile has its own small local memory, and data moves between tiles and main memory through programmable DMA engines. Small language models are limited mostly by how quickly their weights can be read from memory, because each generated token needs every weight once. The GPU has more memory bandwidth than the NPU, while the NPU uses less power. Question: based only on this context, which part of the chip is likely to generate text fastest for a single user, and why?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 31,
+     "first_diff_vs_bf16": 31
+    }
+   ]
+  },
+  "w8g64": {
+   "weight_rel_rms": 0.00629,
+   "embedding_rel_rms": 0.006,
+   "fixture": {
+    "hidden_max_abs_err": 0.25,
+    "hidden_rel_rms": 0.01278,
+    "argmax_mismatch_positions": [],
+    "hidden_rel_rms_vs_bf16": 0.01315
+   },
+   "text": {
+    "tokens": 7703,
+    "perplexity": 119.6389,
+    "top1_agreement_with_bf16": 0.97287,
+    "mean_kl_to_bf16": 0.001439
+   },
+   "seconds": 62.2,
+   "greedy": [
+    {
+     "prompt": "What is an NPU?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 21,
+     "first_diff_vs_bf16": 21
+    },
+    {
+     "prompt": "Explain in two sentences why the sky is blue.",
+     "tokens": 48,
+     "first_diff_vs_transformers": 14,
+     "first_diff_vs_bf16": 48
+    },
+    {
+     "prompt": "Here is some context about laptop processors. The AMD Ryzen 9 8945HS combines eight Zen 4 CPU cores, a Radeon 780M integrated GPU and an XDNA neural processing unit. The NPU is a spatial array of AI Engine tiles; each compute tile has its own small local memory, and data moves between tiles and main memory through programmable DMA engines. Small language models are limited mostly by how quickly their weights can be read from memory, because each generated token needs every weight once. The GPU has more memory bandwidth than the NPU, while the NPU uses less power. Question: based only on this context, which part of the chip is likely to generate text fastest for a single user, and why?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 48,
+     "first_diff_vs_bf16": 48
+    }
+   ]
+  },
+  "w8g32": {
+   "weight_rel_rms": 0.00559,
+   "embedding_rel_rms": 0.00539,
+   "fixture": {
+    "hidden_max_abs_err": 0.25,
+    "hidden_rel_rms": 0.01296,
+    "argmax_mismatch_positions": [],
+    "hidden_rel_rms_vs_bf16": 0.01206
+   },
+   "text": {
+    "tokens": 7703,
+    "perplexity": 119.5105,
+    "top1_agreement_with_bf16": 0.97482,
+    "mean_kl_to_bf16": 0.00122
+   },
+   "seconds": 61.1,
+   "greedy": [
+    {
+     "prompt": "What is an NPU?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 48,
+     "first_diff_vs_bf16": 48
+    },
+    {
+     "prompt": "Explain in two sentences why the sky is blue.",
+     "tokens": 48,
+     "first_diff_vs_transformers": 14,
+     "first_diff_vs_bf16": 48
+    },
+    {
+     "prompt": "Here is some context about laptop processors. The AMD Ryzen 9 8945HS combines eight Zen 4 CPU cores, a Radeon 780M integrated GPU and an XDNA neural processing unit. The NPU is a spatial array of AI Engine tiles; each compute tile has its own small local memory, and data moves between tiles and main memory through programmable DMA engines. Small language models are limited mostly by how quickly their weights can be read from memory, because each generated token needs every weight once. The GPU has more memory bandwidth than the NPU, while the NPU uses less power. Question: based only on this context, which part of the chip is likely to generate text fastest for a single user, and why?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 48,
+     "first_diff_vs_bf16": 48
+    }
+   ]
+  },
+  "w4g32": {
+   "weight_rel_rms": 0.10125,
+   "embedding_rel_rms": 0.0978,
+   "fixture": {
+    "hidden_max_abs_err": 2.75,
+    "hidden_rel_rms": 0.16607,
+    "argmax_mismatch_positions": [
+     4,
+     5,
+     11,
+     12,
+     13,
+     14,
+     15,
+     18
+    ],
+    "hidden_rel_rms_vs_bf16": 0.16618
+   },
+   "text": {
+    "tokens": 7703,
+    "perplexity": 141.8332,
+    "top1_agreement_with_bf16": 0.67143,
+    "mean_kl_to_bf16": 0.230885
+   },
+   "seconds": 62.2,
+   "greedy": [
+    {
+     "prompt": "What is an NPU?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 5,
+     "first_diff_vs_bf16": 5
+    },
+    {
+     "prompt": "Explain in two sentences why the sky is blue.",
+     "tokens": 48,
+     "first_diff_vs_transformers": 2,
+     "first_diff_vs_bf16": 2
+    },
+    {
+     "prompt": "Here is some context about laptop processors. The AMD Ryzen 9 8945HS combines eight Zen 4 CPU cores, a Radeon 780M integrated GPU and an XDNA neural processing unit. The NPU is a spatial array of AI Engine tiles; each compute tile has its own small local memory, and data moves between tiles and main memory through programmable DMA engines. Small language models are limited mostly by how quickly their weights can be read from memory, because each generated token needs every weight once. The GPU has more memory bandwidth than the NPU, while the NPU uses less power. Question: based only on this context, which part of the chip is likely to generate text fastest for a single user, and why?",
+     "tokens": 48,
+     "first_diff_vs_transformers": 0,
+     "first_diff_vs_bf16": 0
+    }
+   ]
+  }
+ }
+}

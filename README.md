@@ -158,7 +158,7 @@ bit-identical output.
 | [`experiments/npu_direct.py`](experiments/npu_direct.py) | Thin XRT layer: loads programs and submits them without `iron.jit` overhead (0.16 ms vs ~1 ms per call) |
 | [`experiments/parakeet_pipeline.py`](experiments/parakeet_pipeline.py) | Parakeet front end, TDT decoder and WER, shared by every backend |
 | [`apps/npu_dictate/`](apps/npu_dictate) | Push-to-talk dictation app for Windows |
-| [`experiments/`](experiments/README.md) | Numbered experiments 001–013: write-ups, probes, validation and benchmark scripts |
+| [`experiments/`](experiments/README.md) | Numbered experiments 001–014: write-ups, probes, validation and benchmark scripts |
 | [`docs/setup.md`](docs/setup.md) | Hardware, software versions and how to set up IRON on Windows |
 | [`tests/`](tests) | CPU-only tests run by CI: the dictation chunker, the model download and the chart renderer (the NPU code is checked on the laptop by the validation scripts) |
 | [`docs/writeup.md`](docs/writeup.md) | Technical write-up: the measurements, both designs, the hang and what is left |
@@ -204,6 +204,7 @@ Windows.
 | [011](experiments/011_parakeet_npu.md) | Parakeet via Ryzen AI, then hybrid | official route fails; hybrid accurate at CPU speed |
 | [012](experiments/012_all_npu_encoder.md) | Parakeet encoder entirely on the NPU | **185 ms per 10 s, FP32 accuracy, hang fixed** |
 | [013](experiments/013_raw_capabilities.md) | Raw capabilities vs CPU and GPU | 0.13 ms per call; int8 matmul 1.46 TMAC/s, close to 16 CPU threads, never ahead of them |
+| [014](experiments/014_headroom_leads.md) | Three speed leads checked | Power modes: no gain; encoder GEMMs are DDR-bound (activation re-reads); int8 weights keep both models accurate, speed-up estimated, not built |
 
 Experiments 010 and 012 have handoff documents
 ([010](experiments/010_handoff.md), [012](experiments/012_handoff.md)) with
