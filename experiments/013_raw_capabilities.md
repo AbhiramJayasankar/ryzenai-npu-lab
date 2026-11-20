@@ -657,7 +657,7 @@ loops independently and simply block on locks until data arrives.
 
 `xrt-smi` reports 5 columns. Phoenix's array has a fifth column at the
 left edge, hardware column 0. (IRON's columns 0-3 are the four regular
-hardware columns next to it; that the driver places programs there is *inferred*.) MLIR-AIE's device list only says it "is irregular and
+hardware columns next to it; measured in [experiment 015](015_hidden_column.md).) MLIR-AIE's device list only says it "is irregular and
 no longer exposed" (`docs/Devices.md`), and the current target model
 describes NPU1 with 4 regular columns, so IRON programs see 4 columns. What
 makes it irregular is not documented there. The likely reason (*inferred*)
